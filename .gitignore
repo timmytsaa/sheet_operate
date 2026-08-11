@@ -4,3 +4,4 @@ __pycache__/
 data/selftest/
 # 任務目錄可由 gen_tasks.py + seed 確定性重生，不進版控；蒸餾軌跡（data/sft/）是 API 產物，必須追蹤
 data/tasks/
+dist/
