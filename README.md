@@ -44,7 +44,13 @@ filter_rows（條件篩選）、sort_rows（排序）、groupby_summary（分類
 compute_column（計算欄位）、total_row（總計列）、format_style（粗體/底色/數值格式/紅字）、
 clean_data（去重/去空白/補空值）、join_lookup（跨表查價回填）、
 split_concat（日期拆欄/姓名合併）、top_n（前 N 筆到新表）、
-**composite（組合式多步：篩選→排序→總計、篩選→彙總、清理→計算等，一條指令 2~3 個依序操作）**。
+**composite（組合式多步：一條指令 2~3 個依序操作）**、
+**context_rule（關鍵規則只在【補充說明】——訓練模型遵循使用者自訂規則）**、
+**large_table（120~260 列大表，觀察被截斷，程式碼必須泛化到看不見的列）**。
+
+表格外皮由 5 套 schema 輪換（訂單/報銷明細/庫存清單/工時紀錄/銷售紀錄）；
+第 6 套 hr（出勤紀錄）**只進 OOD 評測集**（`data/tasks/eval_ood`），訓練從未見過。
+模型產生的程式碼執行前先過 `sheetops/safety.py` AST 白名單檢查（封鎖 os/shutil/網路/eval 等）。
 
 每題由「同一段邏輯」同時產生目標表與參考解法，保證可解且驗證器判分一致（`selftest.py` 把關）。
 

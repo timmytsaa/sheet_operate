@@ -85,9 +85,24 @@ SCHEMAS: dict[str, dict] = {
         "groups": zh_data.STORES, "items": zh_data.PRODUCTS,
         "group_default": "總店",
     },
+    # 僅評測（OOD）：不進 TRAIN_SCHEMAS，模型訓練時從未見過這套欄位
+    "hr": {
+        "sheet": "出勤紀錄", "lookup_sheet": "津貼標準",
+        "id": "編號", "id_prefix": "HR", "id_start": 8001,
+        "person": "員工", "group": "廠區", "item": "勤務項目", "cat": "類型",
+        "qty": "時數", "price": "單價", "amount": "小計", "date": "日期",
+        "groups": zh_data.PLANTS, "items": zh_data.HR_ITEMS,
+        "group_default": "總部",
+    },
 }
 
 ROLES = ["id", "person", "group", "item", "cat", "qty", "price", "amount", "date"]
+
+# 訓練時輪換的 schema（hr 排除——保留為 OOD 評測專用）
+TRAIN_SCHEMAS = sorted(k for k in SCHEMAS if k != "hr")
+
+# gen_tasks --schema 用的全域覆寫；None = 隨機輪換 TRAIN_SCHEMAS
+FORCE_SCHEMA: str | None = None
 
 
 def new_wb() -> Workbook:
@@ -172,7 +187,7 @@ def make_table(rng: Random, schema: str | dict | None = None, n: int | None = No
       price_map / groups
     """
     if schema is None:
-        schema = rng.choice(sorted(SCHEMAS))
+        schema = FORCE_SCHEMA or rng.choice(TRAIN_SCHEMAS)
     s = SCHEMAS[schema] if isinstance(schema, str) else schema
 
     if n is None:
@@ -200,6 +215,8 @@ def make_table(rng: Random, schema: str | dict | None = None, n: int | None = No
                 pname, cat, price = sample_item()
                 qty = rng.randint(1, 9)
                 tries += 1
+            while qty * price in seen_amounts:   # 大表後援：微調單價直到唯一（不動 rng 流）
+                price += 10
             seen_amounts.add(qty * price)
 
         row: list = [f"{s['id_prefix']}{s['id_start'] + i}"]

@@ -59,7 +59,14 @@ class ExecResult:
 
 
 def run_code(code: str, input_path: str | Path, output_path: str | Path,
-             timeout: int = 30) -> ExecResult:
+             timeout: int = 30, safety: bool = True) -> ExecResult:
+    if safety:
+        from .safety import check_code_safety
+        ok, reason = check_code_safety(code)
+        if not ok:
+            return ExecResult(False, False, "", reason, 0.0,
+                              f"程式碼未通過安全檢查：{reason}")
+
     input_path = str(Path(input_path).resolve())
     output_path = str(Path(output_path).resolve())
 

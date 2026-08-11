@@ -28,7 +28,14 @@ def main():
     ap.add_argument("--families", default="all", help="逗號分隔的家族名稱，或 all")
     ap.add_argument("--start-index", type=int, default=0,
                     help="任務編號起點（增量擴產用，避免覆蓋既有任務）")
+    ap.add_argument("--schema", default=None,
+                    help="強制使用指定 schema（如 hr）；預設隨機輪換訓練用 schema")
     args = ap.parse_args()
+
+    if args.schema:
+        from sheetops.taskgen import base as _base
+        assert args.schema in _base.SCHEMAS, f"未知 schema: {args.schema}"
+        _base.FORCE_SCHEMA = args.schema
 
     fams = list(FAMILIES) if args.families == "all" else args.families.split(",")
     out_root = Path(args.out)

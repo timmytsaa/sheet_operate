@@ -781,6 +781,112 @@ wb.save(OUTPUT_PATH)
 
 
 # ----------------------------------------------------------------------
+# 13. large_table — 大表格（120~260 列；觀察被截斷，程式碼必須泛化到看不見的列）
+# ----------------------------------------------------------------------
+
+def gen_large_table(rng: Random, task_id: str):
+    variant = rng.choice(["lt_filter", "lt_groupby", "lt_compute", "lt_total"])
+    n = rng.randint(120, 260)
+
+    if variant == "lt_filter":
+        headers, rows, meta = make_table(rng, n=n)
+        t = schema_tokens(meta["s"])
+        ai = _ai(meta)
+        amts = sorted(r[ai] for r in rows)
+        thr = amts[len(amts) // 2]
+        goal_sheets = {t["sheet"]: (headers, [r for r in rows if r[ai] >= thr])}
+        instruction = fill(rng.choice([
+            "請只保留「__SHEET__」工作表中__AMT__大於或等於 __T__ 的資料列，其餘刪除（表格很長，請務必處理到最後一列）。",
+            "把「__SHEET__」裡__AMT__低於 __T__ 的資料列全部刪掉，注意資料有數百列。",
+        ]), t=thr, **t)
+        ref = fill(_HDR + '''ai = headers.index("__AMT__")
+new_rows = [r for r in rows if r[ai] is not None and r[ai] >= __T__]
+''' + _REWRITE, t=thr, **t)
+
+    elif variant == "lt_groupby":
+        headers, rows, meta = make_table(rng, n=n)
+        t = schema_tokens(meta["s"])
+        ci, ai = meta["idx"][meta["col"]["cat"]], _ai(meta)
+        total_h = "總" + t["amt"]
+        stats: dict[str, list[int]] = {}
+        for r in rows:
+            s = stats.setdefault(r[ci], [0, 0])
+            s[0] += r[ai]
+            s[1] += 1
+        sum_rows = [[c, stats[c][0], stats[c][1]] for c in sorted(stats)]
+        goal_sheets = {t["sheet"]: (headers, rows),
+                       "彙總": ([t["cat"], total_h, "筆數"], sum_rows)}
+        instruction = fill(
+            "請新增「彙總」工作表，統計「__SHEET__」中每個__CAT__的__TOTAL_H__與筆數"
+            "（欄位：__CAT__、__TOTAL_H__、筆數，依__CAT__排序）。資料有數百列，請統計全部資料。",
+            total_h=total_h, **t)
+        ref = fill(_HDR + '''ci = headers.index("__CAT__")
+ai = headers.index("__AMT__")
+stats = {}
+for r in rows:
+    if r[ci] is None:
+        continue
+    s = stats.setdefault(r[ci], [0, 0])
+    s[0] += r[ai]
+    s[1] += 1
+out = wb.create_sheet("彙總")
+out.append(["__CAT__", "__TOTAL_H__", "筆數"])
+for cat in sorted(stats):
+    out.append([cat, stats[cat][0], stats[cat][1]])
+wb.save(OUTPUT_PATH)
+''', total_h=total_h, **t)
+        spec = TaskSpec(task_id, "large_table", instruction,
+                        {"target_sheets": [t["sheet"], "彙總"]}, ref,
+                        meta={"variant": variant, "n": n, "schema": meta["s"]["sheet"]})
+        return spec, build_wb({t["sheet"]: (headers, rows)}), build_wb(goal_sheets)
+
+    elif variant == "lt_compute":
+        headers, rows, meta = make_table(rng, n=n, with_amount=False)
+        t = schema_tokens(meta["s"])
+        qi, pi = meta["idx"][meta["col"]["qty"]], meta["idx"][meta["col"]["price"]]
+        goal_sheets = {t["sheet"]: (headers + [t["amt"]],
+                                    [r + [r[qi] * r[pi]] for r in rows])}
+        instruction = fill(
+            "請在「__SHEET__」最右側新增「__AMT__」欄位＝__QTY__ × __PRICE__（數值）。表格有數百列，每一列都要算。",
+            **t)
+        ref = fill(_HDR + '''qi = headers.index("__QTY__")
+pi = headers.index("__PRICE__")
+col = len(headers) + 1
+ws.cell(row=1, column=col, value="__AMT__")
+for i, r in enumerate(rows):
+    ws.cell(row=i + 2, column=col, value=r[qi] * r[pi])
+wb.save(OUTPUT_PATH)
+''', **t)
+
+    else:  # lt_total
+        headers, rows, meta = make_table(rng, n=n)
+        t = schema_tokens(meta["s"])
+        qi, ai = meta["idx"][meta["col"]["qty"]], _ai(meta)
+        total = [None] * len(headers)
+        total[0] = "總計"
+        total[qi] = sum(r[qi] for r in rows)
+        total[ai] = sum(r[ai] for r in rows)
+        goal_sheets = {t["sheet"]: (headers, rows + [total])}
+        instruction = fill(
+            "請在「__SHEET__」資料最底部新增總計列：第一欄填「總計」，__QTY__與__AMT__欄填總和，其餘留空。"
+            "表格有數百列，總和必須涵蓋全部資料。", **t)
+        ref = fill(_HDR + '''qi = headers.index("__QTY__")
+ai = headers.index("__AMT__")
+total = [None] * len(headers)
+total[0] = "總計"
+total[qi] = sum(r[qi] for r in rows if r[qi] is not None)
+total[ai] = sum(r[ai] for r in rows if r[ai] is not None)
+ws.append(total)
+wb.save(OUTPUT_PATH)
+''', **t)
+
+    spec = TaskSpec(task_id, "large_table", instruction,
+                    {"target_sheets": [t["sheet"]]}, ref,
+                    meta={"variant": variant, "n": n, "schema": meta["s"]["sheet"]})
+    return spec, build_wb({t["sheet"]: (headers, rows)}), build_wb(goal_sheets)
+
+
+# ----------------------------------------------------------------------
 
 FAMILIES = {
     "filter_rows": gen_filter_rows,
@@ -795,4 +901,5 @@ FAMILIES = {
     "top_n": gen_top_n,
     "composite": gen_composite,
     "context_rule": gen_context_rule,
+    "large_table": gen_large_table,
 }
