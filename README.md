@@ -68,8 +68,10 @@ python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣�
 
 - [x] **Phase 1 基礎設施**：encoder / gym / verifier / taskgen / teacher 接口（本 repo）
 - [ ] **Phase 2 資料**：teacher 蒸餾軌跡（目標 ≥2k 筆）、指令改寫、難題組合（多步驟任務）
-- [ ] **Phase 3 SFT**：Colab Pro+ 96GB，Qwen3-4B-Instruct-2507 全參數 SFT（bf16 + 8-bit optimizer），
-      checkpoint 存 Google Drive；eval 集 pass@1 追蹤
+- [ ] **Phase 3 SFT**：Colab Pro+，Qwen3-4B-Instruct-2507 + LoRA r=64（抗遺忘），
+      混 10~15% 通用中文指令資料（TaiwanChat），只對 assistant 回覆算 loss，
+      Drive checkpoint 斷點續訓 → `notebooks/colab_sft_lora.ipynb`
+      （流程：裸模型基準線 eval → SFT → 訓後 eval 對比 → 通用能力抽查）
 - [ ] **Phase 4 GRPO**：TRL/Unsloth GRPOTrainer + 本 Gym reward（score，全對加成）；
       沙盒程式碼在 Colab 端執行，建議加一層隔離
 - [ ] **Phase 5 部署**：merge → GGUF → 本地 Ollama 服務
