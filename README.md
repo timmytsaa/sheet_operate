@@ -78,8 +78,9 @@ python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣�
       混 10~15% 通用中文指令資料（TaiwanChat），只對 assistant 回覆算 loss，
       Drive checkpoint 斷點續訓 → `notebooks/colab_sft_lora.ipynb`
       （流程：裸模型基準線 eval → SFT → 訓後 eval 對比 → 通用能力抽查）
-- [ ] **Phase 4 GRPO**：TRL/Unsloth GRPOTrainer + 本 Gym reward（score，全對加成）；
-      沙盒程式碼在 Colab 端執行，建議加一層隔離
+- [ ] **Phase 4 GRPO**：`notebooks/colab_grpo.ipynb`——從 sft_v2 adapter 接續，
+      Unsloth+vLLM rollout、TRL GRPOTrainer、reward = Gym 執行驗證（格式 0.2 + 匹配分 + 全對 +1.0）、
+      任務池 v2 240 + v1 120（防漂移）、KL beta=0.04、訓後三軌評測對比
 - [ ] **Phase 5 部署**：merge → GGUF → 本地 Ollama 服務
 - [ ] **Phase 6（擴充）影像入口**：掃描件/照片/PDF 報表 → [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6)
       （0.9B 文件解析模型）辨識表格結構 → 轉 .xlsx → 交給操作模型執行指令。
