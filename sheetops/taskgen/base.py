@@ -281,5 +281,6 @@ def make_table(rng: Random, schema: str | dict | None = None, n: int | None = No
             rows.insert(rng.randrange(src + 1, len(rows) + 1), list(rows[src]))
 
     meta = {"s": s, "schema": s["sheet"], "col": col, "idx": idx,
+            "key": schema if isinstance(schema, str) else "custom",
             "price_map": price_map, "groups": groups, "n": len(rows)}
     return headers, rows, meta

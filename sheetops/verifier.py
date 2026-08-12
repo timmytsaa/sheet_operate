@@ -189,12 +189,34 @@ def verify(result_path: str | Path, goal_path: str | Path, check: dict | None = 
                         ok = (got == str(want).upper())
                     elif prop == "number_format":
                         ok = (cell.number_format == want)
+                    elif prop == "grid_border":
+                        has = cell.border is not None and all(
+                            getattr(cell.border, side) is not None and
+                            getattr(cell.border, side).style
+                            for side in ("left", "right", "top", "bottom"))
+                        ok = has == bool(want)
+                    elif prop == "align_h":
+                        got = cell.alignment.horizontal if cell.alignment else None
+                        ok = (got == want)
                     else:
                         add_mismatch(f"未知格式屬性 {prop}")
                     if ok:
                         report["format_match"] += 1
                     else:
                         add_mismatch(f"{sname}!{coord} 格式 {prop} 不符（要求 {want!r}）")
+
+    # ---- 合併儲存格比對 ----
+    for mc in check.get("merged", []):
+        sname = mc["sheet"]
+        report["format_total"] += 1
+        if sname not in rwb.sheetnames:
+            add_mismatch(f"合併檢查失敗：缺少工作表「{sname}」")
+            continue
+        merged_set = {str(r) for r in rwb[sname].merged_cells.ranges}
+        if mc["range"].upper() in merged_set:
+            report["format_match"] += 1
+        else:
+            add_mismatch(f"{sname} 缺少合併儲存格 {mc['range']}（現有：{sorted(merged_set)}）")
 
     rwb.close()
     gwb.close()

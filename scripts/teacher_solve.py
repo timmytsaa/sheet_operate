@@ -31,6 +31,8 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--model", default=None, help="覆寫 OLLAMA_MODEL")
     ap.add_argument("--limit", type=int, default=0, help="只處理前 N 題（0 = 全部）")
+    ap.add_argument("--shard", default=None,
+                    help="k/n：只處理第 k 份任務（0-based），供多 teacher 平行分工")
     args = ap.parse_args()
 
     client = OllamaClient(model=args.model)
@@ -52,6 +54,9 @@ def main():
                     pass
 
     task_dirs = sorted(p.parent for p in Path(args.tasks).glob("*/task.json"))
+    if args.shard:
+        k, n = map(int, args.shard.split("/"))
+        task_dirs = [d for i, d in enumerate(task_dirs) if i % n == k]
     if args.limit and args.limit < len(task_dirs):
         # 等距抽樣，讓小批試跑也能涵蓋各任務家族
         stride = len(task_dirs) // args.limit

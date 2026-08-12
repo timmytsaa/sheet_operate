@@ -903,3 +903,10 @@ FAMILIES = {
     "context_rule": gen_context_rule,
     "large_table": gen_large_table,
 }
+
+# v2 難度階梯（在檔尾匯入以避免循環依賴問題）
+from .families_v2 import V2_FAMILIES  # noqa: E402
+
+FAMILIES.update(V2_FAMILIES)
+V1_FAMILY_LIST = [f for f in FAMILIES if f not in V2_FAMILIES]
+V2_FAMILY_LIST = list(V2_FAMILIES)
