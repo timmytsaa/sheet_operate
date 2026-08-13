@@ -78,10 +78,13 @@ python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣�
       混 10~15% 通用中文指令資料（TaiwanChat），只對 assistant 回覆算 loss，
       Drive checkpoint 斷點續訓 → `notebooks/colab_sft_lora.ipynb`
       （流程：裸模型基準線 eval → SFT → 訓後 eval 對比 → 通用能力抽查）
-- [ ] **Phase 4 GRPO**：`notebooks/colab_grpo.ipynb`——從 sft_v2 adapter 接續，
-      Unsloth+vLLM rollout、TRL GRPOTrainer、reward = Gym 執行驗證（格式 0.2 + 匹配分 + 全對 +1.0）、
-      任務池 v2 240 + v1 120（防漂移）、KL beta=0.04、訓後三軌評測對比
-- [ ] **Phase 5 部署**：merge → GGUF → 本地 Ollama 服務
+- [x] **Phase 4 GRPO**：`notebooks/colab_grpo.ipynb`——從 sft_v2 接續、reward = Gym 執行驗證。
+      **成果：v1 100%（104 題）、OOD 98.5%、v2 難度階梯 93.8%**（僅 column_ops 62.5% 待補）
+- [ ] **Phase 5 部署**（進行中）：
+      1. Colab 跑 `notebooks/colab_export_gguf.ipynb`（merge adapter → GGUF q4_K_M → Drive）
+      2. 下載 `sheetops-q4_k_m.gguf` 到 `deploy/`，執行 `ollama create sheetops -f deploy/Modelfile`
+      3. 使用：`python scripts/sheetops_cli.py 報表.xlsx "指令"`（預覽變更→確認→輸出副本；
+         `--in-place` 自動備份、`--context` 帶自訂規則、`--gguf` 可跳過 Ollama 直連 llama.cpp）
 - [ ] **Phase 6（擴充）影像入口**：掃描件/照片/PDF 報表 → [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6)
       （0.9B 文件解析模型）辨識表格結構 → 轉 .xlsx → 交給操作模型執行指令。
       與訓練主線完全解耦，僅作為 pipeline 前端元件（不是 base model）。

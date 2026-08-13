@@ -1,0 +1,14 @@
+# sheetops 本地部署（Ollama）
+# 用法：把 sheetops-q4_k_m.gguf 放到本資料夾後執行
+#   ollama create sheetops -f deploy/Modelfile
+FROM ./sheetops-q4_k_m.gguf
+
+TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
+
+# system prompt 由 CLI 每次呼叫時帶入（與訓練時一致），不烤進模型
+PARAMETER temperature 0
+PARAMETER num_ctx 8192
+PARAMETER stop <|im_end|>
