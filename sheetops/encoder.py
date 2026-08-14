@@ -172,10 +172,22 @@ def encode_sheet(ws: Worksheet, max_rows: int = 40) -> str:
     return "\n".join(lines)
 
 
-def encode_workbook(path: str | Path, max_rows_per_sheet: int = 40) -> str:
+def encode_workbook(path: str | Path, max_rows_per_sheet: int = 40,
+                    max_chars: int = 7000) -> str:
+    """編碼整本工作簿；超過 max_chars 時自動減少每張表顯示的列數。
+
+    多工作表的真實檔案容易撐爆模型 context（進而讓生成失控），
+    因此這裡設總量預算，寧可少顯示幾列也要留足夠空間給模型作答。
+    """
     wb = openpyxl.load_workbook(path, data_only=False)
-    parts = [f"工作表清單: {', '.join(wb.sheetnames)}"]
-    for name in wb.sheetnames:
-        parts.append(encode_sheet(wb[name], max_rows=max_rows_per_sheet))
-    wb.close()
-    return "\n\n".join(parts)
+    try:
+        for rows in (max_rows_per_sheet, 24, 14, 8):
+            parts = [f"工作表清單: {', '.join(wb.sheetnames)}"]
+            for name in wb.sheetnames:
+                parts.append(encode_sheet(wb[name], max_rows=rows))
+            text = "\n\n".join(parts)
+            if len(text) <= max_chars:
+                return text
+        return text
+    finally:
+        wb.close()

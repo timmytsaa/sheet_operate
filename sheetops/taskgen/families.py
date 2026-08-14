@@ -915,3 +915,8 @@ from .families_v3 import V3_FAMILIES  # noqa: E402
 
 FAMILIES.update(V3_FAMILIES)
 V3_FAMILY_LIST = list(V3_FAMILIES)
+
+from .families_v4 import V4_FAMILIES  # noqa: E402
+
+FAMILIES.update(V4_FAMILIES)
+V4_FAMILY_LIST = list(V4_FAMILIES)

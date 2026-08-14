@@ -40,8 +40,19 @@ PORT = int(os.environ.get("SHEETOPS_PORT", "8033"))
 LOG_PATH = ROOT / "logs" / "usage_log.jsonl"
 LOG_PATH.parent.mkdir(exist_ok=True)
 
+GEN_TIMEOUT = int(os.environ.get("SHEETOPS_TIMEOUT", "300"))   # 單次生成上限（秒）
+
 app = FastAPI(title="sheetops")
-client = OllamaClient(host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"), model=MODEL)
+client = OllamaClient(host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+                      model=MODEL, timeout=GEN_TIMEOUT)
+
+
+MAX_GEN_TOKENS = int(os.environ.get("SHEETOPS_MAX_TOKENS", "1400"))
+
+
+def generate(msgs):
+    """互動用生成：限制輸出長度（防重複生成迴圈拖到逾時）、不重試。"""
+    return client.chat(msgs, temperature=0.0, max_tokens=MAX_GEN_TOKENS, retries=1)
 GPU_LOCK = threading.Lock()
 SESSIONS: dict[str, dict] = {}
 SESSION_TTL = 3600
@@ -80,8 +91,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
     with GPU_LOCK:  # 單卡：一次一個請求
         result = process_workbook(
             src, instruction, context,
-            generate_fn=lambda msgs: client.chat(msgs, temperature=0.0),
-            retries=1)
+            generate_fn=generate, retries=1)
     seconds = round(time.monotonic() - t0, 1)
 
     base = {"sid": sid, "file": file.filename, "instruction": instruction,
@@ -107,7 +117,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
 
 
 @app.get("/api/download/{sid}")
-async def api_download(sid: str):
+def api_download(sid: str):
     s = SESSIONS.get(sid)
     if not s:
         return JSONResponse({"ok": False, "error": "session 已過期，請重新處理"})
@@ -117,7 +127,7 @@ async def api_download(sid: str):
 
 
 @app.post("/api/reject/{sid}")
-async def api_reject(sid: str):
+def api_reject(sid: str):
     s = SESSIONS.pop(sid, None)
     if s:
         shutil.rmtree(s["dir"], ignore_errors=True)
@@ -126,7 +136,7 @@ async def api_reject(sid: str):
 
 
 @app.get("/api/result/{sid}")
-async def api_result(sid: str):
+def api_result(sid: str):
     """取回結果檔載入網格預覽（不記入採納決定）。"""
     s = SESSIONS.get(sid)
     if not s:
@@ -136,7 +146,7 @@ async def api_result(sid: str):
 
 
 @app.post("/api/accept/{sid}")
-async def api_accept(sid: str):
+def api_accept(sid: str):
     """SpreadJS 版的網格內採納（不下載檔案也算一次採納）。"""
     if sid in SESSIONS:
         log_event({"event": "decision", "sid": sid, "decision": "accepted"})
@@ -145,7 +155,7 @@ async def api_accept(sid: str):
 
 
 @app.post("/api/edit_event")
-async def api_edit_event(payload: dict):
+def api_edit_event(payload: dict):
     """SpreadJS 手動編輯事件——使用者修正紀錄（未來 DPO 的原料）。"""
     log_event({"event": "user_edit", **{k: payload.get(k) for k in
                ("sid", "sheet", "row", "col", "old", "new")}})
@@ -153,7 +163,7 @@ async def api_edit_event(payload: dict):
 
 
 @app.get("/api/sample")
-async def api_sample():
+def api_sample():
     p = ROOT / "samples" / "測試活頁簿.xlsx"
     if not p.exists():
         return JSONResponse({"ok": False, "error": "找不到範例檔"}, status_code=404)
@@ -197,7 +207,7 @@ async def wb_open(file: UploadFile = File(...)):
 
 
 @app.get("/api/wb/sample")
-async def wb_sample():
+def wb_sample():
     p = ROOT / "samples" / "測試活頁簿.xlsx"
     if not p.exists():
         return JSONResponse({"ok": False, "error": "找不到範例檔"})
@@ -207,7 +217,7 @@ async def wb_sample():
 
 
 @app.post("/api/wb/{sid}/edit")
-async def wb_edit(sid: str, payload: dict):
+def wb_edit(sid: str, payload: dict):
     s = WB.get(sid)
     if not s:
         return JSONResponse({"ok": False, "error": "session 已過期"}, status_code=404)
@@ -220,7 +230,7 @@ async def wb_edit(sid: str, payload: dict):
 
 
 @app.post("/api/wb/{sid}/process")
-async def wb_process(sid: str, payload: dict):
+def wb_process(sid: str, payload: dict):
     s = WB.get(sid)
     if not s:
         return JSONResponse({"ok": False, "error": "session 已過期，請重新開啟檔案"}, status_code=404)
@@ -232,11 +242,18 @@ async def wb_process(sid: str, payload: dict):
     context = payload.get("context") or ""
 
     t0 = time.monotonic()
-    with GPU_LOCK:
-        result = process_workbook(
-            s["current"], instruction, context,
-            generate_fn=lambda msgs: client.chat(msgs, temperature=0.0),
-            retries=1)
+    try:
+        with GPU_LOCK:
+            result = process_workbook(
+                s["current"], instruction, context,
+                generate_fn=generate, retries=1)
+    except Exception as e:      # 模型逾時、連線失敗等都回 JSON，別讓前端收到 500 HTML
+        seconds = round(time.monotonic() - t0, 1)
+        msg = f"{type(e).__name__}: {e}"
+        log_event({"event": "process", "ok": False, "sid": sid, "ui": "pro",
+                   "instruction": instruction, "error": msg, "seconds": seconds})
+        return JSONResponse({"ok": False, "seconds": seconds,
+                             "error": f"處理失敗（{seconds} 秒）：{msg}"})
     seconds = round(time.monotonic() - t0, 1)
 
     base = {"sid": sid, "file": s["name"], "instruction": instruction,
@@ -260,7 +277,7 @@ async def wb_process(sid: str, payload: dict):
 
 
 @app.post("/api/wb/{sid}/accept")
-async def wb_accept(sid: str):
+def wb_accept(sid: str):
     s = WB.get(sid)
     if not s or not s["pending"]:
         return JSONResponse({"ok": False, "error": "沒有待決定的變更"})
@@ -271,7 +288,7 @@ async def wb_accept(sid: str):
 
 
 @app.post("/api/wb/{sid}/reject")
-async def wb_reject(sid: str):
+def wb_reject(sid: str):
     s = WB.get(sid)
     if not s:
         return JSONResponse({"ok": False, "error": "session 已過期"}, status_code=404)
@@ -283,7 +300,7 @@ async def wb_reject(sid: str):
 
 
 @app.get("/api/wb/{sid}/download")
-async def wb_download(sid: str):
+def wb_download(sid: str):
     s = WB.get(sid)
     if not s:
         return JSONResponse({"ok": False, "error": "session 已過期"}, status_code=404)
@@ -296,12 +313,12 @@ NO_CACHE = {"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"}
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
+def index():
     return HTMLResponse(HTML_PAGE, headers=NO_CACHE)
 
 
 @app.get("/pro", response_class=HTMLResponse)
-async def pro():
+def pro():
     return HTMLResponse(HTML_PRO, headers=NO_CACHE)
 
 

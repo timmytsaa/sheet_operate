@@ -206,9 +206,15 @@ async function run() {
   const instn = $("instruction").value.trim();
   if (!instn) { $("status").textContent = "請輸入操作指令"; return; }
   $("go").disabled = true;
-  $("status").textContent = "⏳ 模型處理中（約 20 秒～2 分鐘）…";
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    $("status").textContent = `⏳ 模型處理中… 已等待 ${Math.round((Date.now() - t0) / 1000)} 秒`
+      + "（大表格可能需要數分鐘）";
+  }, 1000);
+  const ctrl = new AbortController();
+  const killer = setTimeout(() => ctrl.abort(), 12 * 60 * 1000);   // 12 分鐘硬上限
   try {
-    const r = await fetch(`/api/wb/${sid}/process`, { method: "POST",
+    const r = await fetch(`/api/wb/${sid}/process`, { method: "POST", signal: ctrl.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ instruction: instn, context: $("context").value }) });
     const j = await r.json();
@@ -219,8 +225,12 @@ async function run() {
     $("code").textContent = j.code;
     $("diffbox").style.display = "block";
     $("status").textContent = `完成（${j.seconds} 秒）——檢查黃底變更後採納或還原。`;
-  } catch (e) { $("status").textContent = "❌ 連線錯誤：" + e; }
-  finally { $("go").disabled = false; }
+  } catch (e) {
+    $("status").textContent = (e && e.name === "AbortError")
+      ? "❌ 超過 12 分鐘沒有回應已中止——請確認伺服器與 Ollama 是否正常，或改用較小的表格。"
+      : "❌ 連線錯誤：" + e;
+  }
+  finally { clearInterval(tick); clearTimeout(killer); $("go").disabled = false; }
 }
 
 async function accept() {

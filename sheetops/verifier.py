@@ -205,6 +205,28 @@ def verify(result_path: str | Path, goal_path: str | Path, check: dict | None = 
                     else:
                         add_mismatch(f"{sname}!{coord} 格式 {prop} 不符（要求 {want!r}）")
 
+    # ---- 公式存在性檢查（值對但填死值者不算通過） ----
+    for fc in check.get("formula_cells", []):
+        sname = fc["sheet"]
+        want_fn = (fc.get("contains") or "").upper()
+        if sname not in rwb.sheetnames:
+            report["format_total"] += 1
+            add_mismatch(f"公式檢查失敗：缺少工作表「{sname}」")
+            continue
+        rws = rwb[sname]
+        c1, r1, c2, r2 = range_boundaries(fc["range"])
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                report["format_total"] += 1
+                v = rws.cell(row=r, column=c).value
+                coord = f"{get_column_letter(c)}{r}"
+                if not (isinstance(v, str) and v.startswith("=")):
+                    add_mismatch(f"{sname}!{coord} 必須是公式（目前為 {v!r}）")
+                elif want_fn and want_fn not in v.upper():
+                    add_mismatch(f"{sname}!{coord} 公式需使用 {want_fn}（目前為 {v!r}）")
+                else:
+                    report["format_match"] += 1
+
     # ---- 合併儲存格比對 ----
     for mc in check.get("merged", []):
         sname = mc["sheet"]
