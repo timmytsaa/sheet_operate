@@ -904,9 +904,14 @@ FAMILIES = {
     "large_table": gen_large_table,
 }
 
-# v2 難度階梯（在檔尾匯入以避免循環依賴問題）
+# v2 難度階梯與 v3 版型對地（在檔尾匯入以避免循環依賴問題）
 from .families_v2 import V2_FAMILIES  # noqa: E402
 
 FAMILIES.update(V2_FAMILIES)
 V1_FAMILY_LIST = [f for f in FAMILIES if f not in V2_FAMILIES]
 V2_FAMILY_LIST = list(V2_FAMILIES)
+
+from .families_v3 import V3_FAMILIES  # noqa: E402
+
+FAMILIES.update(V3_FAMILIES)
+V3_FAMILY_LIST = list(V3_FAMILIES)

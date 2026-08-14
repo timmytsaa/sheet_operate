@@ -124,12 +124,32 @@ def _collect_format_notes(ws: Worksheet, max_row: int, max_col: int, cap: int = 
     return notes
 
 
+def _detect_header_row(ws: Worksheet, max_row: int, max_col: int) -> int:
+    """推測表頭所在列（真實檔案常有標題列在表頭上方）。回傳 1-based 列號。"""
+    counts = []
+    for r in range(1, min(6, max_row) + 1):
+        n = sum(1 for c in range(1, max_col + 1)
+                if ws.cell(row=r, column=c).value not in (None, ""))
+        counts.append(n)
+    best_r, best_n = 1, counts[0]
+    for i, n in enumerate(counts):
+        if n >= 2 and n > best_n + 1:      # 明顯比上方更「滿」的列才視為表頭
+            best_r, best_n = i + 1, n
+            break
+    return best_r
+
+
 def encode_sheet(ws: Worksheet, max_rows: int = 40) -> str:
     max_row, max_col = _used_range(ws)
     if max_row == 0:
         return f"【工作表：{ws.title}】(空白)"
 
     lines = [f"【工作表：{ws.title}】範圍 A1:{get_column_letter(max_col)}{max_row}"]
+    header_row = _detect_header_row(ws, max_row, max_col)
+    if header_row > 1:
+        lines.append(f"[版型] 注意：欄位標頭疑似在第 {header_row} 列"
+                     f"（第 1~{header_row - 1} 列是標題/說明），資料自第 {header_row + 1} 列起。"
+                     "讀取欄位時請以標頭列的實際欄位位置為準。")
     lines.append("  " + " | ".join(get_column_letter(c) for c in range(1, max_col + 1)))
 
     if max_row <= max_rows:
