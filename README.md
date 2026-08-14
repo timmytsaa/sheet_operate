@@ -1,53 +1,97 @@
-﻿# sheet_operate ??閰衣?銵冽?雿芋??蝺?
-閮毀銝?靘?擃葉??隞斗?雿?.xlsx 撌乩?蝪輻?璅∪??瘜??蝭???
+# sheet_operate — 試算表操作模型訓練
 
-| 隢? | ? |
+訓練一個能依繁體中文指令操作 .xlsx 工作簿的模型。方法整合三篇論文：
+
+| 論文 | 借鏡 |
 |---|---|
-| [Spreadsheet-RL](https://arxiv.org/abs/2605.22642) | 銝餉遘嚗?瑁?瘝?嚗ym嚗? ?舫?霅?reward + SFT?L 閮毀 |
-| [SpreadsheetLLM](https://arxiv.org/abs/2407.09025) | 銵冽蝺?蝺函Ⅳ嚗漣璅??撘?閮颯撠暹璅?? |
-| [SheetMind](https://arxiv.org/abs/2506.12339) | ???嚗? prompting 憭抵?蹂?嚗???蝺渡???|
+| [Spreadsheet-RL](https://arxiv.org/abs/2605.22642) | 主軸：可執行沙盒（Gym）+ 可驗證 reward + SFT→RL 訓練 |
+| [SpreadsheetLLM](https://arxiv.org/abs/2407.09025) | 表格緊湊編碼（座標保留、格式附註、頭尾抽樣） |
+| [SheetMind](https://arxiv.org/abs/2506.12339) | 反面教材：純 prompting 天花板低，需靠訓練突破 |
 
-**?銵楝蝺?*嚗飛?芋? Qwen3-4B-Instruct-2507 ????鞈? + teacher ?賊冗嚗llama `qwen3.5:397b`嚗? Colab Pro+嚗?6GB嚗? SFT ??GRPO??嚗?026-08-11 摰?嚗擗曇??蝝?撘Ⅳ?格?嚗? Instruct 敶Ｘ??寥??RPO rollout 銋翰敺?嚗?隢?? Thinking ???乩?敺??遙??冽??詨?閰摯??銝西???頝∟???
+**技術路線**：學生模型用 Qwen3-4B-Instruct-2507 → 合成資料 + teacher 蒸餾（Ollama `qwen3.5:397b`）→ Colab Pro+（96GB）上 SFT → GRPO。
+（2026-08-11 定案：蒸餾資料為純程式碼目標，與 Instruct 形態匹配、GRPO rollout 也快得多；
+論文原用 Thinking 版，若之後組合任務卡在推理瓶頸再評估切換並補思考軌跡資料。）
 
-## ?嗆?
+## 架構
 
 ```
 sheetops/
-  encoder.py        .xlsx ??蝺???銵函內嚗芋??閫撖?
-  executor.py       摮?蝔??銵芋??? Python 蝔?蝣?  verifier.py       蝯? vs ?格?撌乩?蝪踵?撠???reward嚗?+ ?澆?嚗?  env.py            Spreadsheet Gym嚗eset/step 憭??憓?  prompts.py        SFT / teacher / rollout ?梁?內閰?  zh_data.py        蝜葉嚗????平????摨?  taskgen/          10 ???遙?振??韏瑕?銵??誘+?格?銵??圾瘜?
-  ollama_client.py  Ollama ?脩垢/?砍 API 摰Ｘ蝡?scripts/
-  selftest.py           蝡臬蝡航皜穿??圾瘜???詨 Gym ?踵遛??  gen_tasks.py          ?寞活?Ｙ?隞餃?嚗rain/eval ?其???seed ?嚗?  build_sft_dataset.py  隞餃? ??SFT chat jsonl嚗車摮???
-  teacher_solve.py      teacher ?賊冗 + rejection sampling嚗? OLLAMA_API_KEY嚗?  paraphrase.py         ?誘?芰?撖恬?? OLLAMA_API_KEY嚗?data/
-  tasks/train/  300 憿?10 摰嗆? ? 30嚗?  tasks/eval/  50 憿??函? seed嚗?  sft/seed_sft.jsonl  300 蝑車摮?SFT 鞈?
+  encoder.py        .xlsx → 緊湊文字表示（模型的觀察）
+  executor.py       子行程沙盒執行模型產生的 Python 程式碼
+  verifier.py       結果 vs 目標工作簿比對 → reward（值 + 格式）
+  env.py            Spreadsheet Gym：reset/step 多回合環境
+  prompts.py        SFT / teacher / rollout 共用提示詞
+  zh_data.py        繁中（台灣）商業假資料詞庫
+  taskgen/          10 個合成任務家族（起始表+指令+目標表+參考解法）
+  ollama_client.py  Ollama 雲端/本地 API 客戶端
+scripts/
+  selftest.py           端到端自測：參考解法必須全數在 Gym 拿滿分
+  gen_tasks.py          批次產生任務（train/eval 用不同 seed 隔離）
+  build_sft_dataset.py  任務 → SFT chat jsonl（種子資料）
+  teacher_solve.py      teacher 蒸餾 + rejection sampling（需 OLLAMA_API_KEY）
+  paraphrase.py         指令自然化改寫（需 OLLAMA_API_KEY）
+data/
+  tasks/train/  300 題（10 家族 × 30）   tasks/eval/  50 題（獨立 seed）
+  sft/seed_sft.jsonl  300 筆種子 SFT 資料
 ```
 
-隞餃?憟?嚗芋?? `INPUT_PATH` 撌乩?蝪選??瑁???敺???`OUTPUT_PATH`嚗?reward = ?璅極雿倏???嚗潮瘥? + ???澆?瑼Ｘ嚗??典??? solved??
-## 隞餃?摰嗆?嚗1嚗?
-filter_rows嚗?隞嗥祟?賂??ort_rows嚗?摨??roupby_summary嚗?憿?蝮踝???compute_column嚗?蝞?雿??otal_row嚗蜇閮?嚗ormat_style嚗?擃?摨/?詨潭撘?蝝?嚗?clean_data嚗???餌征??鋆征?潘??oin_lookup嚗楊銵冽?孵?憛恬???split_concat嚗??甈?憪??蔥嚗op_n嚗? N 蝑?啗”嚗?**composite嚗???憭郊嚗?璇?隞?2~3 ??摨?雿?**??**context_rule嚗??菔???具??牧??蝺湔芋?敺芯蝙?刻閮???**??**large_table嚗?20~260 ?之銵剁?閫撖◤?芣嚗?撘Ⅳ敹?瘜??啁?銝???嚗?*??
-銵冽憭??5 憟?schema 頛芣?嚗????梢?敦/摨怠?皜/撌交?蝝???瑕蝝??嚗?蝚?6 憟?hr嚗?斤???**?芷?OOD 閰葫??*嚗data/tasks/eval_ood`嚗?閮毀敺閬???璅∪??Ｙ???撘Ⅳ?瑁?????`sheetops/safety.py` AST ?賢??格炎?伐?撠? os/shutil/蝬脰楝/eval 蝑???
-瘥??晞?銝畾菟?頛胯???璅”???圾瘜?靽??航圾銝?霅?文?銝?湛?`selftest.py` ??嚗?
-## 敹恍?憪?
+任務契約：模型讀 `INPUT_PATH` 工作簿，執行操作後存到 `OUTPUT_PATH`；
+reward = 與目標工作簿的匹配率（值逐格比對 + 指定格式檢查），全對才算 solved。
+
+## 任務家族（v1）
+
+filter_rows（條件篩選）、sort_rows（排序）、groupby_summary（分類彙總）、
+compute_column（計算欄位）、total_row（總計列）、format_style（粗體/底色/數值格式/紅字）、
+clean_data（去重/去空白/補空值）、join_lookup（跨表查價回填）、
+split_concat（日期拆欄/姓名合併）、top_n（前 N 筆到新表）、
+**composite（組合式多步：一條指令 2~3 個依序操作）**、
+**context_rule（關鍵規則只在【補充說明】——訓練模型遵循使用者自訂規則）**、
+**large_table（120~260 列大表，觀察被截斷，程式碼必須泛化到看不見的列）**。
+
+表格外皮由 5 套 schema 輪換（訂單/報銷明細/庫存清單/工時紀錄/銷售紀錄）；
+第 6 套 hr（出勤紀錄）**只進 OOD 評測集**（`data/tasks/eval_ood`），訓練從未見過。
+模型產生的程式碼執行前先過 `sheetops/safety.py` AST 白名單檢查（封鎖 os/shutil/網路/eval 等）。
+
+每題由「同一段邏輯」同時產生目標表與參考解法，保證可解且驗證器判分一致（`selftest.py` 把關）。
+
+## 快速開始
+
 ```bash
 pip install -r requirements.txt
-python scripts/selftest.py            # ?＊蝷??? 30/30
+python scripts/selftest.py            # 應顯示 通過 30/30
 python scripts/gen_tasks.py --out data/tasks/train --n 30 --seed 20260811
-python scripts/build_sft_dataset.py   # ??data/sft/seed_sft.jsonl
+python scripts/build_sft_dataset.py   # → data/sft/seed_sft.jsonl
 ```
 
-Teacher ?賊冗嚗?蝺刻摩撠??寧?? `.env`嚗 `OLLAMA_API_KEY=` 敺票銝??堆?甇斗?撌脣???.gitignore嚗??嗅?嚗?
+Teacher 蒸餾：先編輯專案根目錄的 `.env`，在 `OLLAMA_API_KEY=` 後貼上金鑰（此檔已列入 .gitignore），然後：
+
 ```bash
-python scripts/teacher_solve.py --tasks data/tasks/train --k 4   # ?臭葉?瑞?頝?python scripts/paraphrase.py --tasks data/tasks/train            # ?誘憭見??```
+python scripts/teacher_solve.py --tasks data/tasks/train --k 4   # 可中斷續跑
+python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣化
+```
 
-## 閮毀 Roadmap
+## 訓練 Roadmap
 
-- [x] **Phase 1 ?箇?閮剜**嚗ncoder / gym / verifier / taskgen / teacher ?亙嚗 repo嚗?- [ ] **Phase 2 鞈?**嚗eacher ?賊冗頠楚嚗璅???k 蝑???隞斗撖怒憿???憭郊撽遙??
-- [ ] **Phase 3 SFT**嚗olab Pro+嚗wen3-4B-Instruct-2507 + LoRA r=64嚗??箏?嚗?
-      瘛?10~15% ?銝剜??誘鞈?嚗aiwanChat嚗??芸? assistant ??蝞?loss嚗?      Drive checkpoint ?琿?蝥? ??`notebooks/colab_sft_lora.ipynb`
-      嚗?蝔?鋆豢芋?皞? eval ??SFT ??閮? eval 撠? ????賢??賣嚗?- [x] **Phase 4 GRPO**嚗notebooks/colab_grpo.ipynb`?? sft_v2 ?亦??eward = Gym ?瑁?撽???      **??嚗1 100%嚗?04 憿??OD 98.5%?2 ??漲?０ 93.8%**嚗? column_ops 62.5% 敺?嚗?- [ ] **Phase 5 ?函蔡**嚗脰?銝哨?嚗?      1. Colab 頝?`notebooks/colab_export_gguf.ipynb`嚗erge adapter ??GGUF Q8_0 ??Drive嚗?      2. 銝? `sheetops-q8_0.gguf` ??`deploy/`嚗銵?`ollama create sheetops -f deploy/Modelfile`
-      3. 雿輻嚗python scripts/sheetops_cli.py ?梯”.xlsx "?誘"`嚗?閬質??氯?蝣箄??撓?箏?穿?
-         `--in-place` ?芸??遢?--context` 撣嗉閮??--gguf` ?航歲??Ollama ?湧?llama.cpp嚗?- [ ] **Phase 6嚗??敶勗??亙**嚗??辣/?抒?/PDF ?梯” ??[PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6)
-      嚗?.9B ?辣閫??璅∪?嚗儘霅”?潛?瑽???頧?.xlsx ??鈭斤策??璅∪??瑁??誘??      ??蝺港蜓蝺??刻圾?佗?????pipeline ?垢?辣嚗???base model嚗?
-## 閮剛??酉
+- [x] **Phase 1 基礎設施**：encoder / gym / verifier / taskgen / teacher 接口（本 repo）
+- [ ] **Phase 2 資料**：teacher 蒸餾軌跡（目標 ≥2k 筆）、指令改寫、難題組合（多步驟任務）
+- [ ] **Phase 3 SFT**：Colab Pro+，Qwen3-4B-Instruct-2507 + LoRA r=64（抗遺忘），
+      混 10~15% 通用中文指令資料（TaiwanChat），只對 assistant 回覆算 loss，
+      Drive checkpoint 斷點續訓 → `notebooks/colab_sft_lora.ipynb`
+      （流程：裸模型基準線 eval → SFT → 訓後 eval 對比 → 通用能力抽查）
+- [x] **Phase 4 GRPO**：`notebooks/colab_grpo.ipynb`——從 sft_v2 接續、reward = Gym 執行驗證。
+      **成果：v1 100%（104 題）、OOD 98.5%、v2 難度階梯 93.8%**（僅 column_ops 62.5% 待補）
+- [ ] **Phase 5 部署**（進行中）：
+      1. Colab 跑 `notebooks/colab_export_gguf.ipynb`（merge adapter → GGUF Q8_0 → Drive）
+      2. 下載 `sheetops-q8_0.gguf` 到 `deploy/`，執行 `ollama create sheetops -f deploy/Modelfile`
+      3. 使用：`python scripts/sheetops_cli.py 報表.xlsx "指令"`（預覽變更→確認→輸出副本；
+         `--in-place` 自動備份、`--context` 帶自訂規則、`--gguf` 可跳過 Ollama 直連 llama.cpp）
+- [ ] **Phase 6（擴充）影像入口**：掃描件/照片/PDF 報表 → [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6)
+      （0.9B 文件解析模型）辨識表格結構 → 轉 .xlsx → 交給操作模型執行指令。
+      與訓練主線完全解耦，僅作為 pipeline 前端元件（不是 base model）。
 
-- 撽?隞乓潦皞?璅∪??亙神??Excel ?砍?嚗?霅??閰衣?貊憟辣 `formulas` 瘙澆?瘥?
-  嚗摰??府?澆銝泵嚗?隞方? system prompt 撌脣?撠芋??亙神?亥?蝞潦?- ?瑁?瘝? v1 = 摮?蝔?+ ?暹? + ?函?撌乩??桅?嚗L rollout 憭扯?璅∟?璅∪??ＹⅣ????撘琿??Ｕ?- eval ??seed 900001嚗?冽閰葫嚗?敺脰?蝺渲???
+## 設計備註
+
+- 驗證以「值」為準；模型若寫入 Excel 公式，驗證器會嘗試用選用套件 `formulas` 求值後比對
+  （未安裝則該格判不符）。指令與 system prompt 已引導模型直接寫入計算值。
+- 執行沙盒 v1 = 子行程 + 逾時 + 獨立工作目錄；RL rollout 大規模跑模型產碼前應再加強隔離。
+- eval 集（seed 900001）只用於評測，不得進訓練資料。
