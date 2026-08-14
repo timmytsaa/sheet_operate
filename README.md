@@ -83,8 +83,11 @@ python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣�
 - [ ] **Phase 5 部署**（進行中）：
       1. Colab 跑 `notebooks/colab_export_gguf.ipynb`（merge adapter → GGUF Q8_0 → Drive）
       2. 下載 `sheetops-q8_0.gguf` 到 `deploy/`，執行 `ollama create sheetops -f deploy/Modelfile`
-      3. 使用：`python scripts/sheetops_cli.py 報表.xlsx "指令"`（預覽變更→確認→輸出副本；
+      3. CLI：`python scripts/sheetops_cli.py 報表.xlsx "指令"`（預覽變更→確認→輸出副本；
          `--in-place` 自動備份、`--context` 帶自訂規則、`--gguf` 可跳過 Ollama 直連 llama.cpp）
+      4. **網頁版（給同事用）**：`python scripts/serve_web.py` → http://localhost:8033
+         （區網分享 http://<你的IP>:8033；上傳→指令→預覽→確認下載；原檔永不覆寫；
+         單卡全域鎖排隊；`logs/usage_log.jsonl` 記錄指令/程式碼/採納與否 = v3 與 DPO 原料）
 - [ ] **Phase 6（擴充）影像入口**：掃描件/照片/PDF 報表 → [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6)
       （0.9B 文件解析模型）辨識表格結構 → 轉 .xlsx → 交給操作模型執行指令。
       與訓練主線完全解耦，僅作為 pipeline 前端元件（不是 base model）。
