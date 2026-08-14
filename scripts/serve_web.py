@@ -30,6 +30,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from sheetops.ollama_client import OllamaClient
 from sheetops.pipeline import process_workbook
+from sheetops.univer_io import apply_edit, workbook_to_snapshot
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pro_page import HTML_PRO  # noqa: E402  （Univer 版 /pro 頁面）
 
 MODEL = os.environ.get("SHEETOPS_MODEL", "sheetops")
 PORT = int(os.environ.get("SHEETOPS_PORT", "8033"))
@@ -157,6 +161,137 @@ async def api_sample():
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+# ===== /pro（Univer）：伺服器權威工作簿 session =====
+WB: dict[str, dict] = {}
+
+
+def _wb_cleanup() -> None:
+    now = time.time()
+    for sid in [s for s, v in WB.items() if now - v["created"] > SESSION_TTL]:
+        shutil.rmtree(WB[sid]["dir"], ignore_errors=True)
+        WB.pop(sid, None)
+
+
+def _wb_new_session(data: bytes, name: str) -> dict:
+    sid = uuid.uuid4().hex[:12]
+    sdir = Path(tempfile.mkdtemp(prefix=f"sheetops_wb_{sid}_"))
+    current = sdir / "current.xlsx"
+    current.write_bytes(data)
+    WB[sid] = {"dir": sdir, "current": current, "pending": None,
+               "name": name, "created": time.time()}
+    return {"ok": True, "sid": sid, "name": name,
+            "snapshot": workbook_to_snapshot(current)}
+
+
+@app.post("/api/wb/open")
+async def wb_open(file: UploadFile = File(...)):
+    _wb_cleanup()
+    if not file.filename.lower().endswith(".xlsx"):
+        return JSONResponse({"ok": False, "error": "僅支援 .xlsx 檔案"})
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        return JSONResponse({"ok": False, "error": "檔案超過 20MB 上限"})
+    resp = _wb_new_session(data, file.filename)
+    log_event({"event": "wb_open", "sid": resp["sid"], "file": file.filename, "ui": "pro"})
+    return JSONResponse(resp)
+
+
+@app.get("/api/wb/sample")
+async def wb_sample():
+    p = ROOT / "samples" / "測試活頁簿.xlsx"
+    if not p.exists():
+        return JSONResponse({"ok": False, "error": "找不到範例檔"})
+    resp = _wb_new_session(p.read_bytes(), p.name)
+    log_event({"event": "wb_open", "sid": resp["sid"], "file": "(範例)", "ui": "pro"})
+    return JSONResponse(resp)
+
+
+@app.post("/api/wb/{sid}/edit")
+async def wb_edit(sid: str, payload: dict):
+    s = WB.get(sid)
+    if not s:
+        return JSONResponse({"ok": False, "error": "session 已過期"}, status_code=404)
+    target = s["pending"] if (payload.get("target") == "pending" and s["pending"]) else s["current"]
+    ok = apply_edit(target, payload.get("sheet"), int(payload.get("row", 0)),
+                    int(payload.get("col", 0)), payload.get("value"))
+    log_event({"event": "user_edit", "sid": sid, "ui": "pro",
+               **{k: payload.get(k) for k in ("sheet", "row", "col", "value", "target")}})
+    return JSONResponse({"ok": ok})
+
+
+@app.post("/api/wb/{sid}/process")
+async def wb_process(sid: str, payload: dict):
+    s = WB.get(sid)
+    if not s:
+        return JSONResponse({"ok": False, "error": "session 已過期，請重新開啟檔案"}, status_code=404)
+    if s["pending"]:
+        return JSONResponse({"ok": False, "error": "請先採納或還原上一次的變更"})
+    instruction = (payload.get("instruction") or "").strip()
+    if not instruction:
+        return JSONResponse({"ok": False, "error": "指令是空的"})
+    context = payload.get("context") or ""
+
+    t0 = time.monotonic()
+    with GPU_LOCK:
+        result = process_workbook(
+            s["current"], instruction, context,
+            generate_fn=lambda msgs: client.chat(msgs, temperature=0.0),
+            retries=1)
+    seconds = round(time.monotonic() - t0, 1)
+
+    base = {"sid": sid, "file": s["name"], "instruction": instruction,
+            "context": context, "model": MODEL, "seconds": seconds,
+            "attempts": result["attempts"], "code": result["code"], "ui": "pro"}
+    if not result["ok"]:
+        log_event({**base, "event": "process", "ok": False, "error": result["error"]})
+        return JSONResponse({"ok": False, "error": result["error"], "seconds": seconds})
+
+    pending = s["dir"] / "pending.xlsx"
+    shutil.move(str(result["result_path"]), str(pending))
+    s["pending"] = pending
+    changed = sum(v["changed"] for v in result["diff"]["sheets"].values())
+    log_event({**base, "event": "process", "ok": True, "changed_cells": changed,
+               "sheets_added": result["diff"]["sheets_added"]})
+    return JSONResponse({
+        "ok": True, "sid": sid, "seconds": seconds,
+        "diff_text": result["diff_text"], "code": result["code"],
+        "diff_coords": {name: v["coords"] for name, v in result["diff"]["sheets"].items()},
+        "snapshot": workbook_to_snapshot(pending)})
+
+
+@app.post("/api/wb/{sid}/accept")
+async def wb_accept(sid: str):
+    s = WB.get(sid)
+    if not s or not s["pending"]:
+        return JSONResponse({"ok": False, "error": "沒有待決定的變更"})
+    Path(s["pending"]).replace(s["current"])
+    s["pending"] = None
+    log_event({"event": "decision", "sid": sid, "decision": "accepted", "ui": "pro"})
+    return JSONResponse({"ok": True, "snapshot": workbook_to_snapshot(s["current"])})
+
+
+@app.post("/api/wb/{sid}/reject")
+async def wb_reject(sid: str):
+    s = WB.get(sid)
+    if not s:
+        return JSONResponse({"ok": False, "error": "session 已過期"}, status_code=404)
+    if s["pending"]:
+        Path(s["pending"]).unlink(missing_ok=True)
+        s["pending"] = None
+    log_event({"event": "decision", "sid": sid, "decision": "rejected", "ui": "pro"})
+    return JSONResponse({"ok": True, "snapshot": workbook_to_snapshot(s["current"])})
+
+
+@app.get("/api/wb/{sid}/download")
+async def wb_download(sid: str):
+    s = WB.get(sid)
+    if not s:
+        return JSONResponse({"ok": False, "error": "session 已過期"}, status_code=404)
+    log_event({"event": "download", "sid": sid, "ui": "pro"})
+    return FileResponse(s["current"], filename="已修改_" + s["name"],
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTML_PAGE
@@ -164,8 +299,7 @@ async def index():
 
 @app.get("/pro", response_class=HTMLResponse)
 async def pro():
-    key = os.environ.get("SHEETOPS_SPREADJS_KEY", "")
-    return HTML_PRO.replace("__SPREADJS_KEY__", key.replace('"', ""))
+    return HTML_PRO
 
 
 HTML_PAGE = """<!doctype html>
@@ -256,185 +390,7 @@ async function reject() {
 </script></body></html>"""
 
 
-HTML_PRO = """<!doctype html>
-<html lang="zh-Hant"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>試算表助理 Pro</title>
-<link rel="stylesheet"
-  href="https://cdn.grapecity.com/spreadjs/hosted/css/gc.spread.sheets.excel2013white.17.0.8.css">
-<script src="https://cdn.grapecity.com/spreadjs/hosted/scripts/gc.spread.sheets.all.17.0.8.min.js"></script>
-<script src="https://cdn.grapecity.com/spreadjs/hosted/scripts/interop/gc.spread.excelio.17.0.8.min.js"></script>
-<style>
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
-         display: flex; flex-direction: column; height: 100vh; color: #1a2233; }
-  header { height: 50px; display: flex; align-items: center; gap: 12px; padding: 0 16px;
-           background: #1f2d50; color: #fff; flex: none; }
-  header b { font-size: 16px; } header a { color: #aabdf0; font-size: 13px; text-decoration: none; }
-  header .spacer { flex: 1; }
-  .btn { border: 0; border-radius: 7px; padding: 7px 16px; font-size: 14px; cursor: pointer;
-         font-family: inherit; }
-  .b-blue { background: #2456d6; color: #fff; } .b-blue:disabled { background: #90a5d8; }
-  .b-grey { background: #e8ecf5; color: #1a2233; }
-  .b-dark { background: #33406b; color: #fff; }
-  main { flex: 1; display: flex; min-height: 0; }
-  #ss { flex: 1; min-width: 0; }
-  aside { width: 350px; flex: none; border-left: 1px solid #dde3ef; padding: 14px;
-          overflow-y: auto; background: #f7f9fd; }
-  aside label { display: block; font-weight: 600; font-size: 13px; margin: 10px 0 4px; }
-  aside textarea { width: 100%; border: 1px solid #ccd3e0; border-radius: 7px; padding: 8px;
-                   font-size: 14px; font-family: inherit; resize: vertical; }
-  #instruction { min-height: 74px; } #context { min-height: 44px; }
-  #status { font-size: 13px; color: #5a6580; margin-top: 10px; min-height: 18px; }
-  #diffbox { display: none; margin-top: 10px; }
-  #diff { background: #fff; border: 1px solid #e3e8f2; border-radius: 7px; padding: 10px;
-          font-size: 12.5px; white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto; }
-  details { margin-top: 8px; } summary { cursor: pointer; color: #5a6580; font-size: 12.5px; }
-  #code { background: #fff; border: 1px solid #e3e8f2; border-radius: 7px; padding: 10px;
-          font-size: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
-  .hint { font-size: 12px; color: #9aa3b8; margin-top: 12px; }
-</style></head><body>
-<header>
-  <b>📊 試算表助理 Pro</b>
-  <button class="btn b-dark" onclick="document.getElementById('file').click()">開啟檔案</button>
-  <button class="btn b-dark" onclick="loadSample()">載入範例</button>
-  <input type="file" id="file" accept=".xlsx" style="display:none">
-  <span class="spacer"></span>
-  <button class="btn b-grey" onclick="download()">下載目前結果</button>
-  <a href="/">← 簡易版</a>
-</header>
-<main>
-  <div id="ss"></div>
-  <aside>
-    <label>操作指令</label>
-    <textarea id="instruction" placeholder="例：刪除金額低於 7500 的列，按金額由大到小排序，底部加總計列"></textarea>
-    <label>補充說明（選填）</label>
-    <textarea id="context" placeholder="例：本公司折扣一律 85 折，小數無條件捨去"></textarea>
-    <div style="margin-top:12px">
-      <button class="btn b-blue" id="go" onclick="run()">執行</button>
-    </div>
-    <div id="status">先開啟檔案或載入範例。</div>
-    <div id="diffbox">
-      <label>變更預覽（黃底＝變更的儲存格）</label>
-      <div id="diff"></div>
-      <details><summary>檢視產生的程式碼</summary><pre id="code"></pre></details>
-      <div style="margin-top:10px">
-        <button class="btn b-blue" onclick="accept()">✅ 採納</button>
-        <button class="btn b-grey" onclick="reject()">✖ 還原</button>
-      </div>
-    </div>
-    <div class="hint">採納後可繼續下指令或直接在表格內手動修改（手動修正會被記錄，用來讓模型越來越懂你們）。</div>
-  </aside>
-</main>
-<script>
-// 金鑰由伺服器從環境變數 SHEETOPS_SPREADJS_KEY 注入（評估或正式金鑰皆可）
-const _K = "__SPREADJS_KEY__";
-if (_K) GC.Spread.Sheets.LicenseKey = _K;
-const $ = id => document.getElementById(id);
-let workbook, excelIO, fileName = "工作簿.xlsx";
-let sid = null, prevJSON = null, resultBlob = null, loading = false;
 
-window.onload = () => {
-  workbook = new GC.Spread.Sheets.Workbook($("ss"), { sheetCount: 1 });
-  excelIO = new GC.Spread.Excel.IO();
-  workbook.bind(GC.Spread.Sheets.Events.ValueChanged, (e, a) => {
-    if (loading) return;
-    fetch("/api/edit_event", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sid: sid, sheet: a.sheetName, row: a.row, col: a.col,
-                             old: String(a.oldValue ?? ""), new: String(a.newValue ?? "") }) });
-  });
-};
-
-function loadBlob(blob, coords) {
-  excelIO.open(blob, json => {
-    loading = true;
-    workbook.fromJSON(json);
-    if (coords) highlight(coords);
-    loading = false;
-  }, err => { $("status").textContent = "❌ 檔案載入失敗：" + (err.errorMessage || err); });
-}
-
-function highlight(coordsBySheet) {
-  for (const [name, coords] of Object.entries(coordsBySheet)) {
-    const sheet = workbook.getSheetFromName(name);
-    if (!sheet) continue;
-    sheet.suspendPaint();
-    coords.forEach(([r, c]) => sheet.getCell(r, c).backColor("#FFF3B0"));
-    sheet.resumePaint();
-  }
-}
-
-$("file").addEventListener("change", e => {
-  const f = e.target.files[0];
-  if (!f) return;
-  fileName = f.name; sid = null; $("diffbox").style.display = "none";
-  loadBlob(f);
-  $("status").textContent = "已載入：" + fileName;
-});
-
-async function loadSample() {
-  const r = await fetch("/api/sample");
-  if (!r.ok) { $("status").textContent = "找不到範例檔"; return; }
-  fileName = "測試活頁簿.xlsx"; sid = null; $("diffbox").style.display = "none";
-  loadBlob(await r.blob());
-  $("status").textContent = "已載入範例。試試：刪除金額低於 7500 的列，按金額由大到小排序";
-}
-
-function run() {
-  const inst = $("instruction").value.trim();
-  if (!inst) { $("status").textContent = "請輸入操作指令"; return; }
-  $("go").disabled = true;
-  $("status").textContent = "⏳ 匯出目前表格並送交模型（約 20 秒～2 分鐘）…";
-  prevJSON = workbook.toJSON();
-  excelIO.save(prevJSON, async blob => {
-    try {
-      const fd = new FormData();
-      fd.append("file", new File([blob], fileName.endsWith(".xlsx") ? fileName : "工作簿.xlsx"));
-      fd.append("instruction", inst);
-      fd.append("context", $("context").value);
-      const r = await fetch("/api/process", { method: "POST", body: fd });
-      const j = await r.json();
-      if (!j.ok) { $("status").textContent = "❌ " + j.error; return; }
-      sid = j.sid;
-      const rb = await fetch("/api/result/" + sid);
-      resultBlob = await rb.blob();
-      loadBlob(resultBlob, j.diff_coords);
-      $("diff").textContent = j.diff_text;
-      $("code").textContent = j.code;
-      $("diffbox").style.display = "block";
-      $("status").textContent = `完成（${j.seconds} 秒）——檢查黃底變更後採納或還原。`;
-    } catch (e) { $("status").textContent = "❌ 連線錯誤：" + e; }
-    finally { $("go").disabled = false; }
-  }, err => { $("go").disabled = false; $("status").textContent = "❌ 匯出失敗：" + err; });
-}
-
-async function accept() {
-  if (!sid) return;
-  await fetch("/api/accept/" + sid, { method: "POST" });
-  sid = null; $("diffbox").style.display = "none";
-  if (resultBlob) loadBlob(resultBlob);   // 重載一次去掉黃底
-  $("status").textContent = "已採納，可繼續下一個指令或手動微調。";
-}
-
-async function reject() {
-  if (sid) await fetch("/api/reject/" + sid, { method: "POST" });
-  sid = null; $("diffbox").style.display = "none";
-  if (prevJSON) { loading = true; workbook.fromJSON(prevJSON); loading = false; }
-  $("status").textContent = "已還原到執行前的狀態。";
-}
-
-function download() {
-  if (sid) accept();   // 下載視同採納
-  excelIO.save(workbook.toJSON(), blob => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = fileName.replace(".xlsx", "") + "_已修改.xlsx";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }, err => { $("status").textContent = "❌ 匯出失敗：" + err; });
-}
-</script></body></html>"""
 
 
 if __name__ == "__main__":
