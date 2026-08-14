@@ -1,7 +1,7 @@
 # sheetops 本地部署（Ollama）
-# 用法：把 sheetops-q4_k_m.gguf 放到本資料夾後執行
+# 用法：把 sheetops-q8_0.gguf 放到本資料夾後執行
 #   ollama create sheetops -f deploy/Modelfile
-FROM ./sheetops-q4_k_m.gguf
+FROM ./sheetops-q8_0.gguf
 
 TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
