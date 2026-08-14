@@ -103,11 +103,18 @@ function mount(snapshot, coordsBySheet) {
       presets: [C.UniverSheetsCorePreset({ container: "univer" })],
     });
     const api = inst.univerAPI;
+    // Univer 會跟隨系統的深色偏好；本工具固定淺色，否則試算表變黑底看不清楚
+    if (api.toggleDarkMode) { try { api.toggleDarkMode(false); } catch (e) {} }
     (api.createWorkbook || api.createUniverSheet).call(api, snapshot);
     sheetIdToName = {};
     for (const [sid_, sh] of Object.entries(snapshot.sheets || {})) sheetIdToName[sid_] = sh.name;
     bindEdits(api);
-    setTimeout(() => window.dispatchEvent(new Event("resize")), 100);  // 讓渲染引擎補量測
+    setTimeout(() => {
+      window.dispatchEvent(new Event("resize"));   // 讓渲染引擎補量測
+      if (api.toggleDarkMode) { try { api.toggleDarkMode(false); } catch (e) {} }
+      document.documentElement.classList.remove("dark");
+      document.body.classList.remove("dark");
+    }, 150);
     if (coordsBySheet) setTimeout(() => highlight(coordsBySheet), 300);
   } catch (e) {
     $("status").textContent = "❌ 網格初始化失敗：" + e;
