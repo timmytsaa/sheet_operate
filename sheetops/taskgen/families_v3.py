@@ -150,7 +150,7 @@ wb.save(OUTPUT_PATH)
         instruction = fill(rng.choice([
             "請新增「彙總」工作表（欄位：__CAT__、__TOTAL_H__、筆數，依__CAT__排序），"
             "統計「__SHEET__」中每個__CAT__的__TOTAL_H__與筆數。原表不動。",
-            "幫我從「__SHEET__」做分類統計到新工作表「彙總」：各__CAT__一列，"
+            "幫我從「__SHEET__」做分類統計到新工作表「彙總」：各__CAT__一列（依__CAT__名稱排序），"
             "欄位是 __CAT__、__TOTAL_H__、筆數。",
         ]), total_h=total_h, **t)
         ref = fill('''import openpyxl
