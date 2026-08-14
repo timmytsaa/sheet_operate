@@ -43,6 +43,7 @@ def diff_workbooks(before_path: str | Path, after_path: str | Path) -> dict:
 
         changed = 0
         samples: list[str] = []
+        coords: list[list[int]] = []      # 0-based [row, col]，供前端高亮
         for r in range(1, max_r + 1):
             for c in range(1, max_c + 1):
                 bv = _norm(bws.cell(row=r, column=c).value)
@@ -55,13 +56,15 @@ def diff_workbooks(before_path: str | Path, after_path: str | Path) -> dict:
                     and abs(float(bv) - float(av)) <= 1e-9
                 ):
                     changed += 1
+                    if len(coords) < 3000:
+                        coords.append([r - 1, c - 1])
                     if len(samples) < MAX_SAMPLES:
                         coord = f"{get_column_letter(c)}{r}"
                         samples.append(f"{coord}: {_fmt(bws.cell(row=r, column=c).value)}"
                                        f" → {_fmt(aws.cell(row=r, column=c).value)}")
         if changed or (b_r, b_c) != (a_r, a_c):
             result["sheets"][name] = {
-                "changed": changed, "samples": samples,
+                "changed": changed, "samples": samples, "coords": coords,
                 "dims_before": f"{b_r}列×{b_c}欄", "dims_after": f"{a_r}列×{a_c}欄",
             }
 
