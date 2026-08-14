@@ -164,7 +164,8 @@ async def index():
 
 @app.get("/pro", response_class=HTMLResponse)
 async def pro():
-    return HTML_PRO
+    key = os.environ.get("SHEETOPS_SPREADJS_KEY", "")
+    return HTML_PRO.replace("__SPREADJS_KEY__", key.replace('"', ""))
 
 
 HTML_PAGE = """<!doctype html>
@@ -326,7 +327,9 @@ HTML_PRO = """<!doctype html>
   </aside>
 </main>
 <script>
-// 正式授權後在此填入： GC.Spread.Sheets.LicenseKey = "..."（未填會顯示評估版浮水印）
+// 金鑰由伺服器從環境變數 SHEETOPS_SPREADJS_KEY 注入（評估或正式金鑰皆可）
+const _K = "__SPREADJS_KEY__";
+if (_K) GC.Spread.Sheets.LicenseKey = _K;
 const $ = id => document.getElementById(id);
 let workbook, excelIO, fileName = "工作簿.xlsx";
 let sid = null, prevJSON = null, resultBlob = null, loading = false;
