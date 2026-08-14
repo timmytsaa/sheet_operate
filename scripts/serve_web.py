@@ -292,14 +292,17 @@ async def wb_download(sid: str):
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+NO_CACHE = {"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTML_PAGE
+    return HTMLResponse(HTML_PAGE, headers=NO_CACHE)
 
 
 @app.get("/pro", response_class=HTMLResponse)
 async def pro():
-    return HTML_PRO
+    return HTMLResponse(HTML_PRO, headers=NO_CACHE)
 
 
 HTML_PAGE = """<!doctype html>

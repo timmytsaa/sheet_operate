@@ -16,7 +16,7 @@ HTML_PRO = """<!doctype html>
 <script src="https://unpkg.com/rxjs@7.8.1/dist/bundles/rxjs.umd.min.js"></script>
 <script src="https://unpkg.com/@univerjs/presets@0.25.1/lib/umd/index.js"></script>
 <script src="https://unpkg.com/@univerjs/preset-sheets-core@0.25.1/lib/umd/index.js"></script>
-<script src="https://unpkg.com/@univerjs/preset-sheets-core@0.25.1/lib/umd/locales/zh-CN.js"></script>
+<script src="https://unpkg.com/@univerjs/preset-sheets-core@0.25.1/lib/umd/locales/zh-TW.js"></script>
 <style>
   /* 樣式全部鎖定在自家 id/class，避免污染 Univer 內部元件 */
   :root { color-scheme: only light; }
@@ -87,6 +87,30 @@ const $ = id => document.getElementById(id);
 let inst = null, sid = null, pendingOpen = false, loading = false;
 let sheetIdToName = {};
 
+// Univer 會跟隨系統深色偏好；本工具固定淺色，否則試算表變黑底看不見。
+// 渲染分多階段完成，故重複套用並持續監看 dark class。
+function forceLight(api) {
+  const kill = () => {
+    try { if (api && api.toggleDarkMode) api.toggleDarkMode(false); } catch (e) {}
+    document.documentElement.classList.remove("dark");
+    document.body.classList.remove("dark");
+    document.querySelectorAll(".dark").forEach(el => el.classList.remove("dark"));
+  };
+  kill();
+  [100, 300, 800, 1500].forEach(ms => setTimeout(kill, ms));
+  if (!window._darkObserver) {
+    window._darkObserver = new MutationObserver(muts => {
+      for (const m of muts) {
+        if (m.target.classList && m.target.classList.contains("dark")) {
+          m.target.classList.remove("dark");
+        }
+      }
+    });
+    window._darkObserver.observe(document.documentElement,
+      { attributes: true, attributeFilter: ["class"], subtree: true });
+  }
+}
+
 function mount(snapshot, coordsBySheet) {
   loading = true;
   try {
@@ -96,10 +120,13 @@ function mount(snapshot, coordsBySheet) {
     const LT = window.UniverCore.LocaleType;   // 0.25.x：LocaleType 在 UniverCore
     const theme = (window.UniverThemes && window.UniverThemes.defaultTheme) ||
                   (window.UniverDesign && window.UniverDesign.defaultTheme);
+    const loc = LT.ZH_TW || LT.ZH_CN;
+    const locData = window.UniverPresetSheetsCoreZhTW || window.UniverPresetSheetsCoreZhCN || {};
     inst = P.createUniver({
-      locale: LT.ZH_CN,
-      locales: { [LT.ZH_CN]: window.UniverPresetSheetsCoreZhCN || {} },
+      locale: loc,
+      locales: { [loc]: locData },
       theme: theme,
+      darkMode: false,
       presets: [C.UniverSheetsCorePreset({ container: "univer" })],
     });
     const api = inst.univerAPI;
@@ -109,12 +136,8 @@ function mount(snapshot, coordsBySheet) {
     sheetIdToName = {};
     for (const [sid_, sh] of Object.entries(snapshot.sheets || {})) sheetIdToName[sid_] = sh.name;
     bindEdits(api);
-    setTimeout(() => {
-      window.dispatchEvent(new Event("resize"));   // 讓渲染引擎補量測
-      if (api.toggleDarkMode) { try { api.toggleDarkMode(false); } catch (e) {} }
-      document.documentElement.classList.remove("dark");
-      document.body.classList.remove("dark");
-    }, 150);
+    forceLight(api);
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 150);
     if (coordsBySheet) setTimeout(() => highlight(coordsBySheet), 300);
   } catch (e) {
     $("status").textContent = "❌ 網格初始化失敗：" + e;
