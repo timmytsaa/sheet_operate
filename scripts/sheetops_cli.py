@@ -28,6 +28,19 @@ from sheetops.executor import extract_code, run_code
 from sheetops.ollama_client import OllamaClient
 from sheetops.prompts import SYSTEM_PROMPT, build_user_prompt
 
+LOG_PATH = Path(__file__).resolve().parents[1] / "logs" / "usage_log.jsonl"
+
+
+def log_event(record: dict) -> None:
+    """與網頁版同格式的使用紀錄（v3 任務規格與 DPO 的原料）。"""
+    import json
+    import time
+    record["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    record["source"] = "cli"
+    LOG_PATH.parent.mkdir(exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="sheetops：口語指令操作 Excel")
@@ -101,20 +114,34 @@ def main() -> int:
         print(f"執行失敗：{exec_result.reason}")
         if args.code_file or attempt >= args.retries:
             print(exec_result.feedback())
+            log_event({"event": "process", "ok": False, "file": src.name,
+                       "instruction": args.instruction, "context": args.context,
+                       "model": Path(args.gguf).name if args.gguf else args.model,
+                       "code": code, "error": exec_result.reason})
             return 1
         messages.append({"role": "user",
                          "content": "程式碼執行失敗，請修正後重新輸出完整程式碼。\n"
                                     + exec_result.feedback()})
 
+    d = diff_workbooks(src, result_path)
     print("\n===== 變更預覽 =====")
-    print(render_diff(diff_workbooks(src, result_path)))
+    print(render_diff(d))
     print("====================\n")
+
+    base_log = {"event": "process", "ok": True, "file": src.name,
+                "instruction": args.instruction, "context": args.context,
+                "model": Path(args.gguf).name if args.gguf else args.model,
+                "code": code,
+                "changed_cells": sum(v["changed"] for v in d["sheets"].values()),
+                "sheets_added": d["sheets_added"]}
 
     if not args.yes:
         ans = input("套用變更？[y/N] ").strip().lower()
         if ans not in ("y", "yes"):
+            log_event({**base_log, "decision": "rejected"})
             print("已取消，原始檔案未變動。")
             return 0
+    log_event({**base_log, "decision": "accepted"})
 
     if args.in_place:
         backup = src.with_suffix(src.suffix + ".bak")

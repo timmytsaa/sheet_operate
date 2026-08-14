@@ -45,6 +45,7 @@ SESSION_TTL = 3600
 
 def log_event(record: dict) -> None:
     record["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    record["source"] = "web"
     with LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
