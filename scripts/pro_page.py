@@ -8,6 +8,7 @@
 HTML_PRO = """<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="only light">
 <title>試算表助理 Pro</title>
 <link rel="stylesheet" href="https://unpkg.com/@univerjs/preset-sheets-core@0.25.1/lib/index.css">
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
@@ -17,25 +18,27 @@ HTML_PRO = """<!doctype html>
 <script src="https://unpkg.com/@univerjs/preset-sheets-core@0.25.1/lib/umd/index.js"></script>
 <script src="https://unpkg.com/@univerjs/preset-sheets-core@0.25.1/lib/umd/locales/zh-CN.js"></script>
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
-         display: flex; flex-direction: column; height: 100vh; color: #1a2233; }
-  header { height: 50px; display: flex; align-items: center; gap: 12px; padding: 0 16px;
-           background: #1f2d50; color: #fff; flex: none; }
-  header b { font-size: 16px; } header a { color: #aabdf0; font-size: 13px; text-decoration: none; }
-  header .spacer { flex: 1; }
+  /* 樣式全部鎖定在自家 id/class，避免污染 Univer 內部元件 */
+  :root { color-scheme: only light; }
+  html, body { margin: 0; height: 100%; background: #fff; }
+  body { font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
+         display: flex; flex-direction: column; color: #1a2233; }
+  #topbar { height: 50px; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+            background: #1f2d50; color: #fff; flex: none; box-sizing: border-box; }
+  #topbar b { font-size: 16px; } #topbar a { color: #aabdf0; font-size: 13px; text-decoration: none; }
+  #topbar .spacer { flex: 1; }
   .btn { border: 0; border-radius: 7px; padding: 7px 16px; font-size: 14px; cursor: pointer;
-         font-family: inherit; }
+         font-family: inherit; box-sizing: border-box; }
   .b-blue { background: #2456d6; color: #fff; } .b-blue:disabled { background: #90a5d8; }
   .b-grey { background: #e8ecf5; color: #1a2233; }
   .b-dark { background: #33406b; color: #fff; }
-  main { flex: 1; display: flex; min-height: 0; }
-  #univer { flex: 1; min-width: 0; }
-  aside { width: 350px; flex: none; border-left: 1px solid #dde3ef; padding: 14px;
-          overflow-y: auto; background: #f7f9fd; }
-  aside label { display: block; font-weight: 600; font-size: 13px; margin: 10px 0 4px; }
-  aside textarea { width: 100%; border: 1px solid #ccd3e0; border-radius: 7px; padding: 8px;
-                   font-size: 14px; font-family: inherit; resize: vertical; }
+  #layout { flex: 1; display: flex; min-height: 0; height: calc(100vh - 50px); }
+  #univer { flex: 1 1 auto; min-width: 0; height: 100%; position: relative; }
+  #panel { width: 350px; flex: none; border-left: 1px solid #dde3ef; padding: 14px;
+           overflow-y: auto; background: #f7f9fd; box-sizing: border-box; }
+  #panel label { display: block; font-weight: 600; font-size: 13px; margin: 10px 0 4px; }
+  #panel textarea { width: 100%; border: 1px solid #ccd3e0; border-radius: 7px; padding: 8px;
+                    font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box; }
   #instruction { min-height: 74px; } #context { min-height: 44px; }
   #status { font-size: 13px; color: #5a6580; margin-top: 10px; min-height: 18px; }
   #diffbox { display: none; margin-top: 10px; }
@@ -47,7 +50,7 @@ HTML_PRO = """<!doctype html>
           font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow: auto; }
   .hint { font-size: 12px; color: #9aa3b8; margin-top: 12px; }
 </style></head><body>
-<header>
+<div id="topbar">
   <b>📊 試算表助理 Pro</b>
   <button class="btn b-dark" onclick="document.getElementById('file').click()">開啟檔案</button>
   <button class="btn b-dark" onclick="loadSample()">載入範例</button>
@@ -55,10 +58,10 @@ HTML_PRO = """<!doctype html>
   <span class="spacer"></span>
   <button class="btn b-grey" onclick="download()">下載</button>
   <a href="/">← 簡易版</a>
-</header>
-<main>
+</div>
+<div id="layout">
   <div id="univer"></div>
-  <aside>
+  <div id="panel">
     <label>操作指令</label>
     <textarea id="instruction" placeholder="例：刪除金額低於 7500 的列，按金額由大到小排序，底部加總計列"></textarea>
     <label>補充說明（選填）</label>
@@ -77,8 +80,8 @@ HTML_PRO = """<!doctype html>
       </div>
     </div>
     <div class="hint">採納後可繼續下指令，或直接在表格內修改（手動修正會同步回檔案並記錄）。</div>
-  </aside>
-</main>
+  </div>
+</div>
 <script>
 const $ = id => document.getElementById(id);
 let inst = null, sid = null, pendingOpen = false, loading = false;
@@ -104,6 +107,7 @@ function mount(snapshot, coordsBySheet) {
     sheetIdToName = {};
     for (const [sid_, sh] of Object.entries(snapshot.sheets || {})) sheetIdToName[sid_] = sh.name;
     bindEdits(api);
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 100);  // 讓渲染引擎補量測
     if (coordsBySheet) setTimeout(() => highlight(coordsBySheet), 300);
   } catch (e) {
     $("status").textContent = "❌ 網格初始化失敗：" + e;
