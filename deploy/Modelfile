@@ -1,6 +1,8 @@
 # sheetops 本地部署（Ollama）
-# 用法：把 sheetops-q8_0.gguf 放到本資料夾後執行
+# 用法：把 GGUF 放到本資料夾後執行
 #   ollama create sheetops -f deploy/Modelfile
+# 使用原尺寸 q8_0（4.3GB）以保品質。注意：8GB 顯卡若同時開 Creo 等吃顯存的軟體，
+# 顯存會被擠爆導致生成極慢（實測降到 3.8 tok/s），使用本工具時建議先關閉那類程式。
 FROM ./sheetops-q8_0.gguf
 
 TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
