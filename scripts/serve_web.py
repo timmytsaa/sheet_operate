@@ -111,6 +111,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
                "sheets_added": result["diff"]["sheets_added"]})
     return JSONResponse({"ok": True, "sid": sid, "seconds": seconds,
                          "diff_text": result["diff_text"], "code": result["code"],
+                         "inference": result.get("inference", ""),
                          "sheets_added": result["diff"]["sheets_added"],
                          "diff_coords": {name: v["coords"]
                                          for name, v in result["diff"]["sheets"].items()}})
@@ -272,6 +273,7 @@ def wb_process(sid: str, payload: dict):
     return JSONResponse({
         "ok": True, "sid": sid, "seconds": seconds,
         "diff_text": result["diff_text"], "code": result["code"],
+        "inference": result.get("inference", ""),
         "diff_coords": {name: v["coords"] for name, v in result["diff"]["sheets"].items()},
         "snapshot": workbook_to_snapshot(pending)})
 
@@ -368,6 +370,9 @@ HTML_PAGE = """<!doctype html>
 </div>
 <div class="card hidden" id="result">
   <h1>變更預覽</h1>
+  <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
+       border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px">
+    <b>模型的理解</b><br><span id="infer"></span></div>
   <pre id="diff"></pre>
   <details><summary>檢視產生的程式碼</summary><pre id="code"></pre></details>
   <div style="margin-top:16px">
@@ -397,6 +402,8 @@ async function run() {
     $("status").textContent = `完成（${j.seconds} 秒）——請檢查下方變更，確認無誤再下載。`;
     $("diff").textContent = j.diff_text;
     $("code").textContent = j.code;
+    if (j.inference) { $("infer").textContent = j.inference; $("inferbox").style.display = "block"; }
+    else { $("inferbox").style.display = "none"; }
     $("result").classList.remove("hidden");
   } catch (e) { $("status").textContent = "❌ 連線錯誤：" + e; }
   finally { $("go").disabled = false; }

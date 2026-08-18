@@ -71,6 +71,10 @@ HTML_PRO = """<!doctype html>
     </div>
     <div id="status">先開啟檔案或載入範例。</div>
     <div id="diffbox">
+      <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
+           border-radius:7px;padding:9px 10px;margin-top:10px;font-size:12.5px;line-height:1.5">
+        <b>模型的理解</b><br><span id="infer"></span>
+      </div>
       <label>變更預覽（黃底＝變更的儲存格）</label>
       <div id="diff"></div>
       <details><summary>檢視產生的程式碼</summary><pre id="code"></pre></details>
@@ -223,6 +227,8 @@ async function run() {
     mount(j.snapshot, j.diff_coords);
     $("diff").textContent = j.diff_text;
     $("code").textContent = j.code;
+    if (j.inference) { $("infer").textContent = j.inference; $("inferbox").style.display = "block"; }
+    else { $("inferbox").style.display = "none"; }
     $("diffbox").style.display = "block";
     $("status").textContent = `完成（${j.seconds} 秒）——檢查黃底變更後採納或還原。`;
   } catch (e) {

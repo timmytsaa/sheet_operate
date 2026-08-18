@@ -15,6 +15,15 @@ from .executor import extract_code, run_code
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 
 
+def extract_inference(code: str) -> str:
+    """取出模型的推斷註記（# 推斷：…），供介面顯示「模型的理解」。"""
+    for line in (code or "").splitlines()[:5]:
+        line = line.strip()
+        if line.startswith("#") and "推斷" in line:
+            return line.lstrip("#").strip()
+    return ""
+
+
 def process_workbook(src: str | Path, instruction: str, context: str = "",
                      generate_fn: Callable[[list[dict]], str] = None,
                      retries: int = 1, exec_timeout: int = 60) -> dict:
@@ -44,7 +53,8 @@ def process_workbook(src: str | Path, instruction: str, context: str = "",
             d = diff_workbooks(src, result_path)
             return {"ok": True, "code": code, "attempts": attempt + 1,
                     "result_path": result_path, "diff": d,
-                    "diff_text": render_diff(d), "error": ""}
+                    "diff_text": render_diff(d),
+                    "inference": extract_inference(code), "error": ""}
 
         if attempt < retries:
             messages.append({"role": "assistant", "content": reply})
