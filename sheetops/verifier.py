@@ -205,6 +205,47 @@ def verify(result_path: str | Path, goal_path: str | Path, check: dict | None = 
                     else:
                         add_mismatch(f"{sname}!{coord} 格式 {prop} 不符（要求 {want!r}）")
 
+    # ---- 新工作表比對（模型自己命名時用：只看內容不看名字） ----
+    ns = check.get("new_sheet")
+    if ns:
+        known = set(ns.get("known_sheets", []))
+        added = [s for s in rwb.sheetnames if s not in known]
+        report["format_total"] += 1
+        if len(added) != 1:
+            add_mismatch(f"應新增剛好 1 張工作表，實際新增 {len(added)} 張：{added}")
+        else:
+            report["format_match"] += 1
+            ws = rwb[added[0]]
+            headers = ns.get("headers") or []
+            rows = ns.get("rows") or []
+            # 標題列可有可無：對得上就從第 2 列比資料，對不上則視為缺標題（扣分但仍比資料）
+            first = [ws.cell(row=1, column=c + 1).value for c in range(len(headers))]
+            has_header = headers and all(
+                _values_equal(first[c], headers[c], tol) for c in range(len(headers)))
+            if headers:
+                report["value_total"] += 1
+                if has_header:
+                    report["value_match"] += 1
+                else:
+                    add_mismatch(f"新工作表「{added[0]}」缺少標題列（應為 {headers}）")
+            offset = 2 if has_header else 1
+            for i, exp_row in enumerate(rows):
+                for j, exp_v in enumerate(exp_row):
+                    report["value_total"] += 1
+                    got = ws.cell(row=offset + i, column=j + 1).value
+                    if _values_equal(got, exp_v, tol):
+                        report["value_match"] += 1
+                    else:
+                        coord = f"{get_column_letter(j + 1)}{offset + i}"
+                        add_mismatch(f"新工作表「{added[0]}」{coord} 為 {got!r}，應為 {exp_v!r}")
+            # 多出來的資料列也算錯
+            extra = _used_range(ws)[0] - (offset + len(rows) - 1)
+            report["value_total"] += 1
+            if extra <= 0:
+                report["value_match"] += 1
+            else:
+                add_mismatch(f"新工作表「{added[0]}」多出 {extra} 列（應只有 {len(rows)} 筆資料）")
+
     # ---- 公式存在性檢查（值對但填死值者不算通過） ----
     for fc in check.get("formula_cells", []):
         sname = fc["sheet"]

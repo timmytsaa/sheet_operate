@@ -112,3 +112,25 @@ def order_id(i: int) -> str:
 
 def order_date(rng: Random, year: int = 2026) -> _dt.date:
     return _dt.date(year, rng.randint(1, 7), rng.randint(1, 28))
+
+# ---- v5 terse_intent：品管檢驗情境（仿真實 OOB 報表：越/中混寫的缺陷描述）----
+DEFECT_TEXTS = [
+    "xuoc op sau 后壳刮伤", "mẻ ốp cạnh trên 后壳破裂", "xước ốp sau 后壳刮伤",
+    "me khung canh 前框刮伤", "ban tem may 机台标签脏污", "han day cap CAP线压痕",
+    "thieu giay man hinh 缺屏幕保护膜", "Bẩn màn trong 画面脏污", "xuoc pir PIR刮伤",
+    "nhan tem thung 外箱标签起皱", "NG DO MAU 色温规格外", "xuoc khung truoc 前框刮伤",
+    "me op canh duoi 后壳下缘破裂", "xuoc op usb 端口USB刮伤", "Panel 有白點",
+]
+
+PASS_SENTINELS = ["ok", "OK", "Ok", "正常", "良品", "PASS", "無異常"]
+
+# (群組欄名, 群組值清單) — 供「只要 Config 1 的」這類篩選
+GROUP_SCHEMES = [
+    ("Config", ["Config 1", "Config 2", "Config 3"]),
+    ("機種", ["A型", "B型", "C型"]),
+    ("批號", ["L01", "L02", "L03"]),
+    ("線別", ["一線", "二線", "三線"]),
+]
+
+INSPECT_SHEET_NAMES = ["OOB", "出貨檢驗", "全檢紀錄", "外觀檢查"]
+MASTER_SHEET_NAMES = ["All", "生產紀錄", "投入清單", "機台總表"]
