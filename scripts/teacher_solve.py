@@ -31,6 +31,9 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--model", default=None, help="覆寫 OLLAMA_MODEL")
     ap.add_argument("--limit", type=int, default=0, help="只處理前 N 題（0 = 全部）")
+    ap.add_argument("--skip-from", default=None,
+                    help="glob（如 'data/sft/v5_*.jsonl'）：這些檔案裡已完成的題目一併略過，"
+                         "供跨 teacher 救援時不重複解題")
     ap.add_argument("--shard", default=None,
                     help="k/n：只處理第 k 份任務（0-based），供多 teacher 平行分工")
     args = ap.parse_args()
@@ -52,6 +55,16 @@ def main():
                     done_ids.add(json.loads(line)["id"])
                 except (json.JSONDecodeError, KeyError):
                     pass
+
+    if args.skip_from:
+        import glob as _g
+        for fp in _g.glob(args.skip_from):
+            with open(fp, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        done_ids.add(json.loads(line)["id"])
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
     task_dirs = sorted(p.parent for p in Path(args.tasks).glob("*/task.json"))
     if args.shard:
