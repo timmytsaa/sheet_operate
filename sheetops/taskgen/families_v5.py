@@ -174,12 +174,17 @@ def _compose(rng: Random, c: dict, reveal: set[str]) -> str:
     tg, sc = c["target_group"], c["status_col"]
     paren_style = rng.random() < 0.45
 
-    main = rng.choice([
+    # 「分析結果」這種措辭沒有點出「要篩掉正常的」，只有在狀態欄或哨兵值被揭露時才可用，
+    # 否則指令會欠定（使用者真實那句是靠括號補充「OOB有問題的，ok則不加入」交代意圖的）。
+    intent_stated = bool({"status", "sentinel"} & reveal)
+    main_pool = [
         f"{tg} 有問題的做一張新表",
         f"把 {tg} 有問題的挑出來，做成新的工作表",
-        f"{tg} 的分析結果做在新的工作表",
         f"請把 {tg} 有異常的整理到新工作表",
-    ])
+    ]
+    if intent_stated:
+        main_pool.append(f"{tg} 的分析結果做在新的工作表")
+    main = rng.choice(main_pool)
 
     hints = []
     if "src" in reveal:
