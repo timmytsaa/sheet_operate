@@ -32,6 +32,20 @@ def _load_dotenv() -> None:
             os.environ[k] = v
 
 
+# 模型偶爾會在正文前吐出 <think> / <tool_call> 控制標記，Ollama 會把整段歸到
+# message.thinking，content 就變成空字串。這裡把兩個欄位都納入並清掉標記。
+_LEAK_TAGS = ("<think>", "</think>", "<tool_call>", "</tool_call>")
+
+
+def _message_text(msg: dict) -> str:
+    text = (msg.get("content") or "").strip()
+    if not text:
+        text = (msg.get("thinking") or "").strip()
+    for tag in _LEAK_TAGS:
+        text = text.replace(tag, "")
+    return text.strip()
+
+
 class OllamaClient:
     def __init__(self, host: str | None = None, api_key: str | None = None,
                  model: str | None = None, timeout: int = 600):
@@ -70,7 +84,7 @@ class OllamaClient:
                 last_err = e
             else:
                 if resp.status_code == 200:
-                    return resp.json()["message"]["content"]
+                    return _message_text(resp.json().get("message") or {})
                 if 400 <= resp.status_code < 500:   # 用戶端錯誤（模型退役、額度等）→ 不重試
                     raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
                 last_err = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
