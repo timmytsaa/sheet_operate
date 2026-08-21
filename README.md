@@ -88,6 +88,29 @@ python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣�
       4. **網頁版（給同事用）**：`python scripts/serve_web.py` → http://localhost:8033
          （區網分享 http://<你的IP>:8033；上傳→指令→預覽→確認下載；原檔永不覆寫；
          單卡全域鎖排隊；`logs/usage_log.jsonl` 記錄指令/程式碼/採納與否 = v3 與 DPO 原料）
+## 到其他電腦部署（Windows）
+
+```bash
+git clone https://github.com/timmytsaa/sheet_operate.git
+```
+
+把 `sheetops-q8_0.gguf` 放進 `deploy\`，然後**雙擊 `deploy\start.bat`**（或在 PowerShell 跑
+`.\deploy\setup.ps1`）。腳本會自動：建立 `.venv` → 裝套件 → 從 `deploy\env.example`
+產生 `.env` → 檢查 Ollama 與模型 → 啟動服務並印出區網網址。
+
+首次還要建立 Ollama 模型（腳本會提示）：
+
+```bash
+ollama create sheetops -f deploy\Modelfile
+```
+
+常用參數：`-Port 8080` 換埠號、`-Model 名稱` 換模型、`-Reinstall` 重建虛擬環境、
+`-NoStart` 只安裝不啟動、`-Firewall` 順便開放區網（需系統管理員身分）。
+
+設定值放在專案根目錄的 `.env`（埠號、模型名、Ollama 位址、逾時秒數），改完重啟即生效。
+同事若連不上，多半是防火牆：以系統管理員身分執行
+`netsh advfirewall firewall add rule name="sheetops 8033" dir=in action=allow protocol=TCP localport=8033 profile=domain,private`。
+
 - [ ] **Phase 6（擴充）影像入口**：掃描件/照片/PDF 報表 → [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6)
       （0.9B 文件解析模型）辨識表格結構 → 轉 .xlsx → 交給操作模型執行指令。
       與訓練主線完全解耦，僅作為 pipeline 前端元件（不是 base model）。

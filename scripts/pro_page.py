@@ -93,25 +93,36 @@ let sheetIdToName = {};
 
 // Univer 會跟隨系統深色偏好；本工具固定淺色，否則試算表變黑底看不見。
 // 渲染分多階段完成，故重複套用並持續監看 dark class。
+const DARK_CLASSES = ["univer-dark", "dark"];   // Univer 0.25 用的是 univer-dark（掛在 <html>）
+
 function forceLight(api) {
   const kill = () => {
     try { if (api && api.toggleDarkMode) api.toggleDarkMode(false); } catch (e) {}
-    document.documentElement.classList.remove("dark");
-    document.body.classList.remove("dark");
-    document.querySelectorAll(".dark").forEach(el => el.classList.remove("dark"));
+    for (const el of [document.documentElement, document.body]) {
+      DARK_CLASSES.forEach(c => el.classList.remove(c));
+    }
+    DARK_CLASSES.forEach(c => document.querySelectorAll("." + c)
+      .forEach(el => el.classList.remove(c)));
   };
   kill();
-  [100, 300, 800, 1500].forEach(ms => setTimeout(kill, ms));
+  [100, 300, 800, 1500, 3000].forEach(ms => setTimeout(kill, ms));
+
   if (!window._darkObserver) {
     window._darkObserver = new MutationObserver(muts => {
       for (const m of muts) {
-        if (m.target.classList && m.target.classList.contains("dark")) {
-          m.target.classList.remove("dark");
+        const cl = m.target.classList;
+        if (cl && DARK_CLASSES.some(c => cl.contains(c))) {
+          DARK_CLASSES.forEach(c => cl.remove(c));
         }
       }
     });
     window._darkObserver.observe(document.documentElement,
       { attributes: true, attributeFilter: ["class"], subtree: true });
+  }
+  // 系統主題切換時 Univer 會重新套用深色，這裡再擋一次
+  if (!window._darkMql) {
+    window._darkMql = matchMedia("(prefers-color-scheme: dark)");
+    try { window._darkMql.addEventListener("change", () => setTimeout(kill, 50)); } catch (e) {}
   }
 }
 

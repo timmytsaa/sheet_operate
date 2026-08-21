@@ -28,8 +28,10 @@ sys.path.insert(0, str(ROOT))
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from sheetops.ollama_client import OllamaClient
+from sheetops.ollama_client import OllamaClient, _load_dotenv
 from sheetops.pipeline import process_workbook
+
+_load_dotenv()          # 讓 .env 的 SHEETOPS_* 設定生效（必須在讀 os.environ 之前）
 from sheetops.univer_io import apply_edit, workbook_to_snapshot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -424,10 +426,31 @@ if __name__ == "__main__":
     import socket
 
     import uvicorn
-    try:
-        ip = socket.gethostbyname(socket.gethostname())
-    except OSError:
-        ip = "127.0.0.1"
-    print(f"sheetops 網頁版啟動：http://localhost:{PORT}（區網：http://{ip}:{PORT}）")
+
+    def lan_ips() -> list[str]:
+        """列出所有可能的區網 IP；預設路由那張網卡排最前面（給同事的網址用它）。"""
+        ips = []
+        try:                                  # 走預設路由的那一張（不會真的連出去）
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ips.append(s.getsockname()[0])
+            s.close()
+        except OSError:
+            pass
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                ip = info[4][0]
+                if ip not in ips and not ip.startswith(("127.", "169.254.")):
+                    ips.append(ip)
+        except OSError:
+            pass
+        return ips or ["127.0.0.1"]
+
+    ips = lan_ips()
+    print(f"sheetops 網頁版啟動")
+    print(f"  本機：   http://localhost:{PORT}/pro")
+    for i, ip in enumerate(ips):
+        tag = "區網（給同事）：" if i == 0 else "其他網卡：    "
+        print(f"  {tag} http://{ip}:{PORT}/pro")
     print(f"模型：{MODEL} @ {client.host}；使用紀錄：{LOG_PATH}")
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
