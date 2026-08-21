@@ -44,9 +44,30 @@ LOG_PATH.parent.mkdir(exist_ok=True)
 
 GEN_TIMEOUT = int(os.environ.get("SHEETOPS_TIMEOUT", "300"))   # 單次生成上限（秒）
 
+# 部署用的 Ollama 位址刻意「不」讀 OLLAMA_HOST——那個是訓練/蒸餾用的雲端位址
+# （.env 裡通常是 https://ollama.com），網頁版要的是本機那台。
+OLLAMA_URL = os.environ.get("SHEETOPS_OLLAMA_HOST") or "http://localhost:11434"
+
 app = FastAPI(title="sheetops")
-client = OllamaClient(host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-                      model=MODEL, timeout=GEN_TIMEOUT)
+client = OllamaClient(host=OLLAMA_URL, model=MODEL, timeout=GEN_TIMEOUT)
+
+
+def preflight() -> None:
+    """啟動前確認 Ollama 活著、而且要用的模型真的存在。"""
+    import requests
+    try:
+        tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=10).json()
+        names = [m.get("name", "") for m in tags.get("models", [])]
+    except Exception as e:
+        print(f"  ⚠ 連不上 Ollama（{OLLAMA_URL}）：{type(e).__name__}")
+        print("    請確認 Ollama 已啟動；或用 SHEETOPS_OLLAMA_HOST 指定位址。")
+        return
+    if any(n == MODEL or n.split(":")[0] == MODEL for n in names):
+        print(f"  模型「{MODEL}」已就緒 @ {OLLAMA_URL}")
+    else:
+        print(f"  ⚠ {OLLAMA_URL} 上找不到模型「{MODEL}」")
+        print(f"    現有模型：{', '.join(names[:8]) or '(無)'}")
+        print(f"    建立方式：ollama create {MODEL} -f deploy/Modelfile")
 
 
 MAX_GEN_TOKENS = int(os.environ.get("SHEETOPS_MAX_TOKENS", "1400"))
@@ -447,7 +468,8 @@ if __name__ == "__main__":
         return ips or ["127.0.0.1"]
 
     ips = lan_ips()
-    print(f"sheetops 網頁版啟動")
+    print("sheetops 網頁版啟動")
+    preflight()
     print(f"  本機：   http://localhost:{PORT}/pro")
     for i, ip in enumerate(ips):
         tag = "區網（給同事）：" if i == 0 else "其他網卡：    "

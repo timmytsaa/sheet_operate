@@ -140,6 +140,22 @@ if ($NoStart) {
 }
 
 Step 7 "啟動服務"
+
+# 埠號被佔用時 uvicorn 會秒退，視窗跟著關掉——先擋下來講清楚
+$busy = Get-NetTCPConnection -LocalPort $usePort -State Listen -ErrorAction SilentlyContinue
+if ($busy) {
+    $pid0 = ($busy | Select-Object -First 1).OwningProcess
+    $pname = (Get-Process -Id $pid0 -ErrorAction SilentlyContinue).ProcessName
+    Say "  ⚠ 連接埠 $usePort 已被佔用（PID $pid0 $pname）——服務可能已經在跑。" Yellow
+    Say "    直接開 http://localhost:$usePort/pro 看看；" Yellow
+    Say "    若要重開，先停掉它：  taskkill /PID $pid0 /F" Yellow
+    Say "    或改用其他埠號：      .\deploy\setup.ps1 -Port 8080" Yellow
+    exit 1
+}
+
 Say "  視窗保持開著；要停止按 Ctrl+C" Yellow
 Say ""
 & $VenvPy (Join-Path $Root "scripts\serve_web.py")
+$code = $LASTEXITCODE
+if ($code -ne 0) { Say "`n服務結束（離開碼 $code）" Red }
+exit $code
