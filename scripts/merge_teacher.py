@@ -8,15 +8,27 @@
 去重規則：同一題若兩個 teacher 產出的程式碼正規化後相同（去註解、去空行、
 統一縮排與引號），只留第一份——完全一樣的樣本沒有多樣性價值，只會加重權重。
 
-方法檢查（--reject-literal-index，預設開啟）
-------------------------------------------
-Gym 驗證的是「輸出」，不是「方法」。teacher 可能用肉眼看 encoder 輸出、判斷
-「H 欄，索引 7」然後硬編 row[7]——剛好猜對就通過驗證，卻示範了正好要根除的習慣
-（真實 BOM 檔上就是這樣爆的：column=14 # M/S 欄是第14欄）。
+方法檢查（預設開啟，--keep-literal-index 可關）
+--------------------------------------------
+Gym 驗證的是「輸出」，不是「方法」。答案對、方法錯的樣本會示範正要根除的習慣。
+兩種痕跡：
 
-判準：合規解法一定先把索引存進變數（row[st_i]、row[pos[h]]），所以字面量
-row[N≥1] 就是違規訊號；row[0] 當空列守衛是合法的（參考解法也這樣寫）。
-實測 210 筆 v6 樣本抓出 18 筆違規，四個家族的參考解法零誤殺。
+1. 硬編欄位索引——teacher 看著 encoder 輸出判斷「H 欄，索引 7」然後寫 row[7]，
+   猜對就通過驗證（真實 BOM 檔上就是這樣爆的：column=14 # M/S 欄是第14欄）。
+   判準：合規解法一定先把索引存進變數（row[st_i]、row[pos[h]]），所以字面量
+   row[N≥1] 就是違規訊號；row[0] 當空列守衛是合法的（參考解法也這樣寫）。
+2. except: pass / except: continue——真實 BOM 裡一格 "TBD" 就被靜默排除在合計外，
+   使用者拿到錯的總數卻沒有警訊。這正是整個專案在對付的靜默錯誤。
+
+（曾試過第三項「推斷註解與程式碼不符」，實測 12 筆全是誤殺——那些解法用
+ header_row = 2 這種變數，而讀第 1 列是為了取合併群組標題、寫 row=1 是輸出表頭。
+ 要修到夠保守就只剩「N 完全沒出現」一種情況，而那唯一的真陽性早被第 1 項抓到，
+ 沒有邊際價值卻有壞的誤殺特性，因此拿掉。）
+
+實測 239 筆 v6 樣本抓出 26 筆，參考解法 40 筆零誤殺。
+
+另有 scripts/generalize_check.py 檢查「換一組資料還對不對」——這支抓的是看得出來的
+壞習慣，那支抓的是看不出來、換組資料才露餡的。
 
 用法：
   python scripts/merge_teacher.py --glob "data/sft/teacher_v6_*.jsonl" --out data/sft/v6_colres.jsonl
@@ -38,6 +50,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 LITERAL_INDEX = re.compile(
     r"row\[\s*[1-9]\d*\s*\]|values\[\s*[1-9]\d*\s*\]|"
     r"\.cell\((?![^)]*value\s*=)[^)]*column\s*=\s*(?!1\b)\d+[^)]*\)\.value")
+
+# 靜默吞例外：答案錯了也看不出來，而且示範了「出事就當沒事」的寫法
+SWALLOW = re.compile(r"except[^\n]*:\s*\n\s*(?:pass|continue)\s*(?:\n|$)")
 
 
 def normalize_code(text: str) -> str:
@@ -76,6 +91,7 @@ def main() -> int:
     per_source: Counter = Counter()
     rejected: list[tuple[str, str, str]] = []
     rej_source: Counter = Counter()
+    rej_kind: Counter = Counter()
 
     for fp in files:
         with open(fp, encoding="utf-8") as f:
@@ -88,11 +104,15 @@ def main() -> int:
                 tid = rec["id"]
                 raw = rec["messages"][-1]["content"]
                 if not args.keep_literal_index:
+                    # 通過 Gym 但方法錯的兩種痕跡
                     hit = LITERAL_INDEX.search(raw)
-                    if hit:
-                        # 通過 Gym 但方法錯——硬編剛好猜對，正是要根除的習慣
-                        rejected.append((tid, rec.get("source", "?"), hit.group(0)))
+                    why = hit.group(0) if hit else None
+                    if why is None and SWALLOW.search(raw):
+                        why = "except: pass（靜默吞例外）"
+                    if why:
+                        rejected.append((tid, rec.get("source", "?"), why))
                         rej_source[rec.get("source", "?")] += 1
+                        rej_kind["靜默吞例外" if "except" in why else "硬編欄位索引"] += 1
                         continue
                 code = normalize_code(raw)
                 if code in seen[tid]:
@@ -118,7 +138,9 @@ def main() -> int:
     print(f"涵蓋題數 {len(by_task)}；平均每題 {n_written / max(len(by_task), 1):.2f} 種實作")
 
     if rejected:
-        print(f"\n方法檢查剔除（通過 Gym 但硬編欄位索引）：{len(rejected)} 筆")
+        print(f"\n方法檢查剔除（通過 Gym 但方法錯）：{len(rejected)} 筆")
+        for kind, n in rej_kind.most_common():
+            print(f"  [{kind}] {n} 筆")
         for src, n in rej_source.most_common():
             print(f"  {src:<40}{n}")
         for tid, src, frag in rejected[:5]:

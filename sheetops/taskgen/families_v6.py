@@ -203,21 +203,21 @@ def gen_dup_header(rng: Random, task_id: str):
         "mid": [
             f"「{c['sheet']}」是左右兩個區塊的對照表，欄名有重複。"
             f"只看「{c['target_block']}」區的「{c['status_col']}」，"
-            f"不是「{c['sentinel']}」的列挑出來做成新工作表，表頭沿用原表。",
+            f"不是「{c['sentinel']}」的列挑出來做成新工作表，表頭用第 2 列那排欄名。",
 
             f"請挑出「{c['sheet']}」表裡「{c['target_block']}」的「{c['status_col']}」"
             f"不是「{c['sentinel']}」的資料列（同名欄位不只一個，別取錯），"
-            f"放到新工作表，欄位與原表相同。",
+            f"放到新工作表，欄位用第 2 列的欄名。",
         ],
         "terse": [
             f"「{c['sheet']}」表裡「{c['target_block']}」的「{c['status_col']}」"
-            f"不是「{c['sentinel']}」的挑出來做成新表，欄位與原表相同。",
+            f"不是「{c['sentinel']}」的挑出來做成新表，欄位用第 2 列的欄名。",
 
             f"把「{c['target_block']}」那邊「{c['status_col']}」有問題的"
-            f"（不是「{c['sentinel']}」）整列挑到新工作表，欄位照原表。",
+            f"（不是「{c['sentinel']}」）整列挑到新工作表，表頭用第 2 列。",
 
             f"「{c['sheet']}」的「{c['target_block']}」區，"
-            f"「{c['status_col']}」非「{c['sentinel']}」的做成新工作表，表頭同原表。",
+            f"「{c['status_col']}」非「{c['sentinel']}」的做成新工作表，表頭取第 2 列。",
         ],
     })
 
