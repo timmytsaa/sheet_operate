@@ -124,8 +124,16 @@ python scripts/paraphrase.py --tasks data/tasks/train            # 指令多樣�
       混 10~15% 通用中文指令資料（TaiwanChat），只對 assistant 回覆算 loss，
       Drive checkpoint 斷點續訓 → `notebooks/colab_sft_lora.ipynb`
       （流程：裸模型基準線 eval → SFT → 訓後 eval 對比 → 通用能力抽查）
+- [ ] **Phase 4.5 DPO**：`notebooks/colab_dpo.ipynb`——**排在 GRPO 之前**（本專案兩度觀察到
+      後續訓練會洗掉 RL 成果：93.8→75.0、95.8→58.3，所以 RL 擺最後）。
+      偏好對由 `scripts/build_dpo.py` 產生，負例有兩種來源：
+      A 沒通過 Gym（64%）、**B 通過 Gym 但方法錯（36%，其中 85% 含硬編欄位索引）**。
+      B 類是關鍵——只用 A 類模型學到「不要出錯」，加上 B 類才學到「即使會對也不要這樣寫」。
+      判讀重點是**硬編率下降**，不是 pass@1 上升。
 - [x] **Phase 4 GRPO**：`notebooks/colab_grpo.ipynb`——從 sft_v2 接續、reward = Gym 執行驗證。
       **成果：v1 100%（104 題）、OOD 98.5%、v2 難度階梯 93.8%**（僅 column_ops 62.5% 待補）
+      reward 已加入**方法懲罰**（與 SFT 資料過濾同一套判準）：純輸出導向的 reward 會讓
+      矇對的硬編索引照樣拿滿分，把前兩階段的方法過濾在 RL 階段抵銷掉。
 - [ ] **Phase 5 部署**（進行中）：
       1. Colab 跑 `notebooks/colab_export_gguf.ipynb`（merge adapter → GGUF Q8_0 → Drive）
       2. 下載 `sheetops-q8_0.gguf` 到 `deploy/`，執行 `ollama create sheetops -f deploy/Modelfile`
