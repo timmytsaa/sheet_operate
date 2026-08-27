@@ -43,7 +43,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+# Colab/IPython 的 sys.stdout 是 ipykernel 的 OutStream，沒有 reconfigure——
+# 這些腳本會被 notebook import，不防守就會在 import 當下就炸掉。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 # 字面量欄位索引＝「用肉眼數欄位」的痕跡；row[0] 例外（空列守衛）

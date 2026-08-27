@@ -14,7 +14,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+# Colab/IPython 的 sys.stdout 是 ipykernel 的 OutStream，沒有 reconfigure——
+# 這些腳本會被 notebook import，不防守就會在 import 當下就炸掉。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from sheetops.encoder import encode_workbook
 from sheetops.env import solve_once
