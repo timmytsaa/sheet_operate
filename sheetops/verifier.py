@@ -213,6 +213,12 @@ def verify(result_path: str | Path, goal_path: str | Path, check: dict | None = 
         report["format_total"] += 1
         if len(added) != 1:
             add_mismatch(f"應新增剛好 1 張工作表，實際新增 {len(added)} 張：{added}")
+            # 沒有新工作表＝該表的內容全錯，必須計入分母。
+            # 否則「什麼都不做」只扣一個 format 單位，分數會虛高到 0.99——
+            # 而 GRPO 的 reward 直接吃 score，這個洞等於獎勵擺爛。
+            report["value_total"] += ((1 if ns.get("headers") else 0)
+                                      + sum(len(r) for r in (ns.get("rows") or []))
+                                      + 1)   # +1：對應下方「多出來的資料列」那個單位
         else:
             report["format_match"] += 1
             ws = rwb[added[0]]
