@@ -8,3 +8,4 @@ dist/
 deploy/*.gguf
 # 使用紀錄含公司真實資料，不進版控
 logs/
+data/dbg/
