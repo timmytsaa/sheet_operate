@@ -139,17 +139,67 @@ def _detect_header_row(ws: Worksheet, max_row: int, max_col: int) -> int:
     return best_r
 
 
+def _detect_two_tier_header(ws: Worksheet, max_col: int):
+    """偵測「表頭跨兩列」：左半欄名在第 1 列，右半欄名在第 2 列（第 1 列是合併群組標題）。
+
+    為什麼需要：真實 BOM（AVTC 檔）就是這種版型——A~G 的欄名在第 1 列、H~R 在第 2 列。
+    原本 _detect_header_row 只能挑「一列」，會回報「標頭在第 2 列（第 1 列是標題/說明）」，
+    那是錯的，而且模型會照做：headers = ws[2] → 找不到 Find Number / Qty → KeyError。
+    實測兩題真實 BOM 任務因此失敗，責任在編碼器不在模型。
+
+    回傳 (左半最後一欄, 群組標題列表) 或 None。
+    """
+    if ws.max_row < 3:
+        return None
+    merged_top = [m for m in ws.merged_cells.ranges if m.min_row == 1 and m.max_col > m.min_col]
+    if not merged_top:                       # 沒有跨欄的群組標題就不是這種版型
+        return None
+    merged_cols = {c for m in merged_top for c in range(m.min_col, m.max_col + 1)}
+    # 左半 = 從 A 往右，直到碰到空欄或群組標題欄為止。
+    # （不能用 min(merged.min_col) - 1：真實檔的左半與群組之間常隔一個空欄，
+    #   AVTC 就是 A~G 有欄名、H 空白、合併群組從 I 開始。）
+    split = 0
+    for c in range(1, max_col + 1):
+        if c in merged_cols or ws.cell(1, c).value in (None, ""):
+            break
+        split = c
+    if split < 1:
+        return None
+    right_named = sum(1 for c in range(split + 1, max_col + 1)
+                      if ws.cell(2, c).value not in (None, ""))
+    if right_named < 2:
+        return None
+    groups = [(get_column_letter(m.min_col), get_column_letter(m.max_col),
+               ws.cell(1, m.min_col).value) for m in sorted(merged_top, key=lambda x: x.min_col)]
+    return split, groups
+
+
 def encode_sheet(ws: Worksheet, max_rows: int = 40) -> str:
     max_row, max_col = _used_range(ws)
     if max_row == 0:
         return f"【工作表：{ws.title}】(空白)"
 
     lines = [f"【工作表：{ws.title}】範圍 A1:{get_column_letter(max_col)}{max_row}"]
-    header_row = _detect_header_row(ws, max_row, max_col)
-    if header_row > 1:
-        lines.append(f"[版型] 注意：欄位標頭疑似在第 {header_row} 列"
-                     f"（第 1~{header_row - 1} 列是標題/說明），資料自第 {header_row + 1} 列起。"
-                     "讀取欄位時請以標頭列的實際欄位位置為準。")
+    two_tier = _detect_two_tier_header(ws, max_col)
+    if two_tier:
+        split, groups = two_tier
+        gtxt = "、".join(f"{a}~{b}「{t}」" for a, b, t in groups if t)
+        left, right = get_column_letter(split), get_column_letter(split + 1)
+        last = get_column_letter(max_col)
+        # 措辭要逐欄講死。第一版寫成「第 1 列該處是群組標題」，模型把左右兩半對調了，
+        # 兩題真實 BOM 任務照樣失敗——歧義的提示跟錯誤的提示一樣糟。
+        lines.append(
+            f"[版型] 注意：表頭跨兩列，左右兩半的取法不同——"
+            f"A~{left} 欄的欄名 = 第 1 列的值；"
+            f"{right}~{last} 欄的欄名 = 第 2 列的值。"
+            f"（{right}~{last} 在第 1 列是跨欄合併的群組標題：{gtxt}，那不是欄名；"
+            f"A~{left} 在第 2 列的值也不是欄名。）資料自第 3 列起。")
+    else:
+        header_row = _detect_header_row(ws, max_row, max_col)
+        if header_row > 1:
+            lines.append(f"[版型] 注意：欄位標頭疑似在第 {header_row} 列"
+                         f"（第 1~{header_row - 1} 列是標題/說明），資料自第 {header_row + 1} 列起。"
+                         "讀取欄位時請以標頭列的實際欄位位置為準。")
     lines.append("  " + " | ".join(get_column_letter(c) for c in range(1, max_col + 1)))
 
     if max_row <= max_rows:
