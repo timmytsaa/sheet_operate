@@ -241,3 +241,34 @@ def encode_workbook(path: str | Path, max_rows_per_sheet: int = 40,
         return text
     finally:
         wb.close()
+
+
+def detect_layout_risks(path: str | Path) -> list[str]:
+    """列出這份工作簿上「模型已知較容易出錯」的版型特徵。
+
+    只列有實測依據的兩項（eval 上都只有 0.25）：
+      重複欄名   —— 同一列出現兩個同名欄，模型會取錯（真實 BOM 的兩個 M/S）
+      兩層表頭   —— 欄名跨兩列，模型會只讀其中一列
+    """
+    risks: set[str] = set()
+    wb = openpyxl.load_workbook(path, data_only=True)
+    for ws in wb.worksheets:
+        max_row, max_col = _used_range(ws)
+        if max_row < 2 or max_col < 2:
+            continue
+        two_tier = _detect_two_tier_header(ws, max_col)
+        if two_tier:
+            risks.add("兩層表頭")
+            # 重複欄名要看「有效欄名」：AVTC 的兩個 M/S 一個在第 1 列、一個在第 2 列，
+            # 只掃單一列看不出來。
+            split = two_tier[0]
+            names = ([ws.cell(row=1, column=c).value for c in range(1, split + 1)]
+                     + [ws.cell(row=2, column=c).value for c in range(split + 1, max_col + 1)])
+        else:
+            hr = _detect_header_row(ws, max_row, max_col)
+            names = [ws.cell(row=hr, column=c).value for c in range(1, max_col + 1)]
+        names = [str(v).strip() for v in names if v not in (None, "")]
+        if len(names) != len(set(names)):
+            risks.add("重複欄名")
+    wb.close()
+    return sorted(risks)

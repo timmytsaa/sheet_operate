@@ -29,6 +29,7 @@ from fastapi import Body, FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from sheetops.ollama_client import OllamaClient, _load_dotenv
+from sheetops.encoder import detect_layout_risks
 from sheetops.pipeline import process_workbook
 
 _load_dotenv()          # 讓 .env 的 SHEETOPS_* 設定生效（必須在讀 os.environ 之前）
@@ -95,9 +96,32 @@ def cleanup_sessions() -> None:
         SESSIONS.pop(sid, None)
 
 
+
+def _consistent(src, instruction, context, answer_path, n=2):
+    """再抽樣 n 次，看結果是否與第一次逐格相同。
+
+    這個模型的失敗模式是「看起來正常的錯答案」，而我們有確定性的執行環境——
+    同一題多跑幾次比對輸出，不一致就代表答案不穩，值得人工確認。不需要正解。
+    """
+    from sheetops.diff import diff_workbooks
+    for _ in range(n):
+        r = process_workbook(src, instruction, context,
+                             generate_fn=lambda m: client.chat(
+                                 m, temperature=0.6, max_tokens=MAX_GEN_TOKENS, retries=1),
+                             retries=1)
+        if not r["ok"]:
+            return False
+        d = diff_workbooks(answer_path, r["result_path"])
+        Path(r["result_path"]).unlink(missing_ok=True)
+        if d["sheets_added"] or d["sheets_removed"] or any(
+                v["changed"] for v in d["sheets"].values()):
+            return False
+    return True
+
+
 @app.post("/api/process")
 async def api_process(file: UploadFile = File(...), instruction: str = Form(...),
-                      context: str = Form("")):
+                      context: str = Form(""), careful: str = Form("")):
     cleanup_sessions()
     if not file.filename.lower().endswith(".xlsx"):
         return JSONResponse({"ok": False, "error": "僅支援 .xlsx 檔案"})
@@ -135,9 +159,15 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
                      "created": time.time()}
     log_event({**base, "event": "process", "ok": True, "changed_cells": changed,
                "sheets_added": result["diff"]["sheets_added"]})
+    risks = detect_layout_risks(src)
+    consistent = None
+    if careful:
+        with GPU_LOCK:
+            consistent = _consistent(src, instruction, context, final)
     return JSONResponse({"ok": True, "sid": sid, "seconds": seconds,
                          "diff_text": result["diff_text"], "code": result["code"],
                          "inference": result.get("inference", ""),
+                         "risks": risks, "consistent": consistent,
                          "sheets_added": result["diff"]["sheets_added"],
                          "diff_coords": {name: v["coords"]
                                          for name, v in result["diff"]["sheets"].items()}})
@@ -438,12 +468,14 @@ HTML_PAGE = """<!doctype html>
   <label>補充說明（選填：你們單位的自訂規則）</label>
   <textarea id="context" placeholder="例：含稅價 = 金額 × 1.05，四捨五入取整數"></textarea>
   <div style="margin-top:16px">
-    <button class="primary" id="go" onclick="run()">執行</button>
+    <label style="font-size:13px;margin-right:12px"><input type="checkbox" id="careful"> 仔細檢查（較慢）</label>
+  <button class="primary" id="go" onclick="run()">執行</button>
   </div>
   <div id="status"></div>
 </div>
 <div class="card hidden" id="result">
   <h1>變更預覽</h1>
+  <div id="warnbox" style="display:none;background:#fff5e6;border:1px solid #f0d090;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px"></div>
   <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
        border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px">
     <b>模型的理解</b>
@@ -491,9 +523,12 @@ async function run() {
   if (!inst) { $("status").textContent = "請輸入操作指令"; return; }
   $("go").disabled = true;
   $("result").classList.add("hidden");
-  $("status").textContent = "⏳ 模型處理中（依表格大小約 20 秒～2 分鐘，若有人排隊會更久）…";
+  $("status").textContent = $("careful").checked
+    ? "⏳ 仔細檢查中（跑 3 次比對，約 3 倍時間）…"
+    : "⏳ 模型處理中（依表格大小約 20 秒～2 分鐘，若有人排隊會更久）…";
   const fd = new FormData();
   fd.append("file", f); fd.append("instruction", inst); fd.append("context", $("context").value);
+  if ($("careful").checked) fd.append("careful", "1");
   try {
     const r = await fetch("/api/process", { method: "POST", body: fd });
     const j = await r.json();
@@ -504,6 +539,12 @@ async function run() {
     $("code").textContent = j.code;
     if (j.inference) { $("infer").value = j.inference; $("inferbox").style.display = "block"; }
     else { $("inferbox").style.display = "none"; }
+    const w = [];
+    if (j.risks && j.risks.length) w.push("⚠ " + j.risks.join("・") + " — 模型較常抓錯欄，請核對");
+    if (j.consistent === false) w.push("⚠ 多次結果不一致，答案可能不可靠");
+    if (j.consistent === true) w.push("✔ 多次結果一致");
+    $("warnbox").innerHTML = w.join("<br>");
+    $("warnbox").style.display = w.length ? "block" : "none";
     $("result").classList.remove("hidden");
   } catch (e) { $("status").textContent = "❌ 連線錯誤：" + e; }
   finally { $("go").disabled = false; }
