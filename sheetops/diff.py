@@ -14,6 +14,7 @@ from .encoder import _used_range
 from .verifier import _norm
 
 MAX_SAMPLES = 12
+PREVIEW_ROWS = 8      # 新工作表預覽列數
 
 
 def _fmt(v) -> str:
@@ -68,6 +69,20 @@ def diff_workbooks(before_path: str | Path, after_path: str | Path) -> dict:
                 "dims_before": f"{b_r}列×{b_c}欄", "dims_after": f"{a_r}列×{a_c}欄",
             }
 
+    # 新工作表要給內容，不能只報名字。這個模型的失敗模式是「看起來正常的錯答案」：
+    # 實測真實 BOM 時，一題該輸出 6 列卻給了 66 列、一題漏掉整類差異——
+    # 兩次的預覽都只有「＋ 新增工作表「X」」一行，使用者根本無從發現。
+    result["added_preview"] = {}
+    for name in result["sheets_added"]:
+        ws = awb[name]
+        n_r, n_c = _used_range(ws)
+        rows = [[_fmt(ws.cell(row=r, column=c).value) for c in range(1, min(n_c, 8) + 1)]
+                for r in range(1, min(n_r, PREVIEW_ROWS) + 1)]
+        result["added_preview"][name] = {
+            "rows": n_r, "cols": n_c, "truncated_cols": n_c > 8,
+            "head": rows, "more": max(0, n_r - PREVIEW_ROWS),
+        }
+
     bwb.close()
     awb.close()
     return result
@@ -76,7 +91,16 @@ def diff_workbooks(before_path: str | Path, after_path: str | Path) -> dict:
 def render_diff(d: dict) -> str:
     lines: list[str] = []
     for s in d["sheets_added"]:
-        lines.append(f"＋ 新增工作表「{s}」")
+        p = (d.get("added_preview") or {}).get(s)
+        if not p:
+            lines.append(f"＋ 新增工作表「{s}」")
+            continue
+        lines.append(f"＋ 新增工作表「{s}」　{p['rows']} 列 × {p['cols']} 欄")
+        for row in p["head"]:
+            cells = " | ".join((v if len(v) <= 18 else v[:17] + "…") for v in row)
+            lines.append(f"    {cells}" + ("  …" if p["truncated_cols"] else ""))
+        if p["more"]:
+            lines.append(f"    …（其餘 {p['more']} 列）")
     for s in d["sheets_removed"]:
         lines.append(f"－ 刪除工作表「{s}」")
     for name, info in d["sheets"].items():
