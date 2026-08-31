@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fastapi import Body, FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from sheetops.ollama_client import OllamaClient, _load_dotenv
@@ -152,10 +152,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
     final = sdir / ("已修改_" + file.filename)
     shutil.move(result["result_path"], final)
     changed = sum(v["changed"] for v in result["diff"]["sheets"].values())
-    # 存來源檔與指令：使用者若發現「模型的理解」有誤，可以改寫後原地重跑
     SESSIONS[sid] = {"dir": sdir, "file": final, "name": final.name,
-                     "src": src, "filename": file.filename,
-                     "instruction": instruction, "context": context,
                      "created": time.time()}
     log_event({**base, "event": "process", "ok": True, "changed_cells": changed,
                "sheets_added": result["diff"]["sheets_added"]})
@@ -168,54 +165,6 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
                          "diff_text": result["diff_text"], "code": result["code"],
                          "inference": result.get("inference", ""),
                          "risks": risks, "consistent": consistent,
-                         "sheets_added": result["diff"]["sheets_added"],
-                         "diff_coords": {name: v["coords"]
-                                         for name, v in result["diff"]["sheets"].items()}})
-
-
-@app.post("/api/rerun")
-def api_rerun(payload: dict = Body(...)):
-    """使用者修正「模型的理解」後重跑。
-
-    修正內容走【補充說明】通道——context_rule 家族就是訓練模型優先遵循那裡的規則，
-    所以這是既有能力，不是新機制。實測模型的推斷會寫錯欄位在第幾列（真實 BOM 上
-    把 Qty 說成第 2 列），那種錯誤使用者一眼看得出來，但無從糾正——這個端點補上。
-    """
-    sid = payload.get("sid") or ""
-    correction = (payload.get("correction") or "").strip()
-    s = SESSIONS.get(sid)
-    if not s or not s.get("src") or not Path(s["src"]).exists():
-        return JSONResponse({"ok": False, "error": "session 已過期，請重新上傳檔案"},
-                            status_code=404)
-    if not correction:
-        return JSONResponse({"ok": False, "error": "請先修改「模型的理解」再重跑"})
-
-    ctx = s.get("context") or ""
-    ctx = (ctx + "\n" if ctx else "") + \
-        f"【修正】你上一次對這份檔案的理解不正確。請改用這個理解：{correction}"
-
-    t0 = time.monotonic()
-    with GPU_LOCK:
-        result = process_workbook(s["src"], s["instruction"], ctx,
-                                  generate_fn=generate, retries=1)
-    seconds = round(time.monotonic() - t0, 1)
-    base = {"sid": sid, "file": s["filename"], "instruction": s["instruction"],
-            "context": ctx, "model": MODEL, "seconds": seconds,
-            "attempts": result["attempts"], "code": result["code"],
-            "correction": correction}
-    if not result["ok"]:
-        log_event({**base, "event": "rerun", "ok": False, "error": result["error"]})
-        return JSONResponse({"ok": False, "error": result["error"], "seconds": seconds})
-
-    final = s["dir"] / ("已修改_" + s["filename"])
-    shutil.move(result["result_path"], final)
-    s["file"], s["name"], s["context"] = final, final.name, ctx
-    changed = sum(v["changed"] for v in result["diff"]["sheets"].values())
-    log_event({**base, "event": "rerun", "ok": True, "changed_cells": changed,
-               "sheets_added": result["diff"]["sheets_added"]})
-    return JSONResponse({"ok": True, "sid": sid, "seconds": seconds,
-                         "diff_text": result["diff_text"], "code": result["code"],
-                         "inference": result.get("inference", ""),
                          "sheets_added": result["diff"]["sheets_added"],
                          "diff_coords": {name: v["coords"]
                                          for name, v in result["diff"]["sheets"].items()}})
@@ -478,12 +427,13 @@ HTML_PAGE = """<!doctype html>
   <div id="warnbox" style="display:none;background:#fff5e6;border:1px solid #f0d090;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px"></div>
   <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
        border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px">
-    <b>模型的理解</b>
-    <span style="color:#5b6b8c">——看到抓錯欄位或表頭列時，直接改這段再按重跑</span>
-    <textarea id="infer" style="width:100%;min-height:56px;margin-top:6px;font-size:13px;
-      font-family:inherit;border:1px solid #c9d8f5;border-radius:6px;padding:6px"></textarea>
-    <button class="ghost" style="margin-top:6px" onclick="rerun()"
-      id="rerunbtn">↻ 照這個理解重跑</button></div>
+    <b>模型的理解</b><br><span id="infer"></span>
+    <div style="margin-top:7px">
+      <button class="ghost" style="font-size:12px;padding:3px 9px" onclick="useInfer()">
+        ↧ 帶入補充說明</button>
+      <span style="color:#5b6b8c;margin-left:6px">抓錯欄位時，帶入後修改再送出</span>
+    </div>
+  </div>
   <pre id="diff"></pre>
   <details><summary>檢視產生的程式碼</summary><pre id="code"></pre></details>
   <div style="margin-top:16px">
@@ -495,25 +445,14 @@ HTML_PAGE = """<!doctype html>
 <script>
 let sid = null;
 const $ = id => document.getElementById(id);
-async function rerun() {
-  if (!sid) return;
-  const corr = $("infer").value.trim();
-  if (!corr) { $("status").textContent = "請先修改「模型的理解」"; return; }
-  $("rerunbtn").disabled = true;
-  $("status").textContent = "⏳ 依你修正的理解重跑中…";
-  try {
-    const r = await fetch("/api/rerun", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ sid: sid, correction: corr })
-    });
-    const j = await r.json();
-    if (!j.ok) { $("status").textContent = "❌ 重跑失敗：" + j.error; return; }
-    $("status").textContent = `已依你的理解重跑完成（${j.seconds} 秒）——請再檢查變更。`;
-    $("diff").textContent = j.diff_text;
-    $("code").textContent = j.code;
-    if (j.inference) $("infer").value = j.inference;
-  } catch (e) { $("status").textContent = "❌ 連線錯誤：" + e; }
-  finally { $("rerunbtn").disabled = false; }
+function useInfer() {
+  // 推斷丟進【補充說明】——那是 context_rule 訓練過的通道，模型會優先遵循。
+  // 改掉錯的那一段再送出即可，不需要另一條重跑路徑。
+  const t = ($("infer").textContent || "").trim();
+  if (!t) return;
+  $("context").value = t;
+  $("context").focus();
+  $("status").textContent = "已帶入補充說明——請修改錯誤的部分，再按「開始處理」。";
 }
 
 async function run() {
@@ -537,7 +476,7 @@ async function run() {
     $("status").textContent = `完成（${j.seconds} 秒）——請檢查下方變更，確認無誤再下載。`;
     $("diff").textContent = j.diff_text;
     $("code").textContent = j.code;
-    if (j.inference) { $("infer").value = j.inference; $("inferbox").style.display = "block"; }
+    if (j.inference) { $("infer").textContent = j.inference; $("inferbox").style.display = "block"; }
     else { $("inferbox").style.display = "none"; }
     const w = [];
     if (j.risks && j.risks.length) w.push("⚠ " + j.risks.join("・") + " — 模型較常抓錯欄，請核對");
