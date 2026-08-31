@@ -47,12 +47,26 @@ if ($Reinstall -and (Test-Path $VenvDir)) {
     Say "  -Reinstall：移除既有的 .venv"
     Remove-Item -Recurse -Force $VenvDir
 }
-if (-not (Test-Path $VenvPy)) {
+# .venv 不可攜：pyvenv.cfg 記著建立當下那台機器的 Python 絕對路徑。
+# 整包資料夾複製到別台後，Test-Path 會過但實際跑不起來，錯誤訊息又指向
+# 前一台使用者的路徑，很難看懂。所以這裡實際執行一次來確認它是活的。
+$venvOk = $false
+if (Test-Path $VenvPy) {
+    & $VenvPy -c "import sys" 2>&1 | Out-Null
+    $venvOk = ($LASTEXITCODE -eq 0)
+    if (-not $venvOk) {
+        Say "  偵測到 .venv 無法執行（多半是從別台電腦複製過來的）——自動重建" Yellow
+        Remove-Item -Recurse -Force $VenvDir -ErrorAction SilentlyContinue
+    }
+}
+if (-not $venvOk) {
     Say "  建立 .venv（第一次會花一兩分鐘）…"
     & $py.Source -m venv $VenvDir
     if (-not (Test-Path $VenvPy)) { Say "建立虛擬環境失敗" Red; exit 1 }
+    & $VenvPy -c "import sys" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Say "新建的 .venv 仍無法執行" Red; exit 1 }
 } else {
-    Say "  已存在，沿用（要重建請加 -Reinstall）"
+    Say "  已存在且可執行，沿用（要重建請加 -Reinstall）"
 }
 
 # ---------- 3. 套件 ----------
