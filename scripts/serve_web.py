@@ -164,6 +164,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
     return JSONResponse({"ok": True, "sid": sid, "seconds": seconds,
                          "diff_text": result["diff_text"], "code": result["code"],
                          "inference": result.get("inference", ""),
+                         "explain": result.get("explain", ""),
                          "risks": risks, "consistent": consistent,
                          "sheets_added": result["diff"]["sheets_added"],
                          "diff_coords": {name: v["coords"]
@@ -327,6 +328,7 @@ def wb_process(sid: str, payload: dict):
         "ok": True, "sid": sid, "seconds": seconds,
         "diff_text": result["diff_text"], "code": result["code"],
         "inference": result.get("inference", ""),
+                         "explain": result.get("explain", ""),
         "diff_coords": {name: v["coords"] for name, v in result["diff"]["sheets"].items()},
         "snapshot": workbook_to_snapshot(pending)})
 
@@ -428,6 +430,7 @@ HTML_PAGE = """<!doctype html>
   <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
        border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px">
     <b>模型的理解</b><br><span id="infer"></span>
+    <div id="explain" style="margin-top:6px;padding-top:6px;border-top:1px dashed #c9d8f5;white-space:pre-wrap;color:#33406b"></div>
     <div style="margin-top:7px">
       <button class="ghost" style="font-size:12px;padding:3px 9px" onclick="useInfer()">
         ↧ 帶入補充說明</button>
@@ -476,7 +479,8 @@ async function run() {
     $("status").textContent = `完成（${j.seconds} 秒）——請檢查下方變更，確認無誤再下載。`;
     $("diff").textContent = j.diff_text;
     $("code").textContent = j.code;
-    if (j.inference) { $("infer").textContent = j.inference; $("inferbox").style.display = "block"; }
+    if (j.inference) { $("infer").textContent = j.inference;
+      $("explain").textContent = j.explain || ""; $("inferbox").style.display = "block"; }
     else { $("inferbox").style.display = "none"; }
     const w = [];
     if (j.risks && j.risks.length) w.push("⚠ " + j.risks.join("・") + " — 模型較常抓錯欄，請核對");

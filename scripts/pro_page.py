@@ -74,6 +74,7 @@ HTML_PRO = """<!doctype html>
       <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
            border-radius:7px;padding:9px 10px;margin-top:10px;font-size:12.5px;line-height:1.5">
         <b>模型的理解</b><br><span id="infer"></span>
+    <div id="explain" style="margin-top:6px;padding-top:6px;border-top:1px dashed #c9d8f5;white-space:pre-wrap;color:#33406b"></div>
         <div style="margin-top:7px">
           <button class="btn" style="font-size:12px;padding:3px 9px" onclick="useInfer()">
             ↧ 帶入補充說明</button>
@@ -253,7 +254,8 @@ async function run() {
     mount(j.snapshot, j.diff_coords);
     $("diff").textContent = j.diff_text;
     $("code").textContent = j.code;
-    if (j.inference) { $("infer").textContent = j.inference; $("inferbox").style.display = "block"; }
+    if (j.inference) { $("infer").textContent = j.inference;
+      $("explain").textContent = j.explain || ""; $("inferbox").style.display = "block"; }
     else { $("inferbox").style.display = "none"; }
     $("diffbox").style.display = "block";
     $("status").textContent = `完成（${j.seconds} 秒）——檢查黃底變更後採納或還原。`;

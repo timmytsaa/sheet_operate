@@ -49,13 +49,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-# 字面量欄位索引＝「用肉眼數欄位」的痕跡；row[0] 例外（空列守衛）
-LITERAL_INDEX = re.compile(
-    r"row\[\s*[1-9]\d*\s*\]|values\[\s*[1-9]\d*\s*\]|"
-    r"\.cell\((?![^)]*value\s*=)[^)]*column\s*=\s*(?!1\b)\d+[^)]*\)\.value")
-
-# 靜默吞例外：答案錯了也看不出來，而且示範了「出事就當沒事」的寫法
-SWALLOW = re.compile(r"except[^\n]*:\s*\n\s*(?:pass|continue)\s*(?:\n|$)")
+# 判準的單一來源在 sheetops/explain.py——那裡的「程式碼實際做了什麼」、這裡的資料
+# 過濾、GRPO 的 reward 懲罰用的必須是同一套；各寫一份遲早會漂移。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sheetops.explain import LITERAL_INDEX, SWALLOW   # noqa: E402,F401
 
 
 def normalize_code(text: str) -> str:

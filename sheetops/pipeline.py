@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+from .explain import render as render_explain
 from .diff import diff_workbooks, render_diff
 from .encoder import encode_workbook
 from .executor import extract_code, run_code
@@ -54,7 +55,9 @@ def process_workbook(src: str | Path, instruction: str, context: str = "",
             return {"ok": True, "code": code, "attempts": attempt + 1,
                     "result_path": result_path, "diff": d,
                     "diff_text": render_diff(d),
-                    "inference": extract_inference(code), "error": ""}
+                    "inference": extract_inference(code),
+                    "explain": render_explain(code, extract_inference(code)),
+                    "error": ""}
 
         if attempt < retries:
             messages.append({"role": "assistant", "content": reply})
