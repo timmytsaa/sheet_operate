@@ -74,6 +74,11 @@ HTML_PRO = """<!doctype html>
       <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
            border-radius:7px;padding:9px 10px;margin-top:10px;font-size:12.5px;line-height:1.5">
         <b>模型的理解</b><br><span id="infer"></span>
+        <div style="margin-top:7px">
+          <button class="btn" style="font-size:12px;padding:3px 9px" onclick="useInfer()">
+            ↧ 帶入補充說明</button>
+          <span style="color:#5b6b8c;margin-left:6px">抓錯欄位時，帶入後修改再執行</span>
+        </div>
       </div>
       <label>變更預覽（黃底＝變更的儲存格）</label>
       <div id="diff"></div>
@@ -213,6 +218,16 @@ $("file").addEventListener("change", async e => {
 async function loadSample() {
   $("status").textContent = "載入範例中…";
   openSession(await fetch("/api/wb/sample"));
+}
+
+function useInfer() {
+  // 把模型自己寫的推斷丟進【補充說明】——那是 context_rule 訓練過的通道，
+  // 模型會優先遵循。使用者改掉錯的那一段再按執行即可，不需要另一條重跑路徑。
+  const t = ($("infer").textContent || "").trim();
+  if (!t) return;
+  $("context").value = t;
+  $("context").focus();
+  $("status").textContent = "已帶入補充說明——請修改錯誤的部分，再按「執行」。";
 }
 
 async function run() {
