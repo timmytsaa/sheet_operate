@@ -77,6 +77,28 @@ MAX_GEN_TOKENS = int(os.environ.get("SHEETOPS_MAX_TOKENS", "1400"))
 def generate(msgs):
     """互動用生成：限制輸出長度（防重複生成迴圈拖到逾時）、不重試。"""
     return client.chat(msgs, temperature=0.0, max_tokens=MAX_GEN_TOKENS, retries=1)
+
+
+def friendly_error(e: Exception) -> str:
+    """把後端的原始錯誤翻成使用者能據以行動的一句話。
+
+    新機器部署時最常見的就是「模型還沒建立」——原本直接丟
+    `RuntimeError: HTTP 404: {"error":"model 'sheetops' not found"}` 給使用者看，
+    那是給開發者的，現場的人不知道要做什麼。
+    """
+    t = str(e)
+    if "not found" in t and "model" in t:
+        return (f"Ollama 上找不到模型「{MODEL}」。請在伺服器這台執行："
+                f"ollama create {MODEL} -f deploy/Modelfile"
+                "（需先把 sheetops-q8_0.gguf 放進 deploy 資料夾）")
+    if "Connection" in type(e).__name__ or "connect" in t.lower():
+        return f"連不上 Ollama（{OLLAMA_URL}）——請確認 Ollama 已啟動。"
+    if "timed out" in t.lower() or "Timeout" in type(e).__name__:
+        return (f"模型逾時（上限 {GEN_TIMEOUT} 秒）。表格較大時可調高 .env 的 "
+                f"SHEETOPS_TIMEOUT，或改用較小的範圍。")
+    return f"{type(e).__name__}: {e}"
+
+
 GPU_LOCK = threading.Lock()
 SESSIONS: dict[str, dict] = {}
 SESSION_TTL = 3600
@@ -135,10 +157,18 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
     src.write_bytes(data)
 
     t0 = time.monotonic()
-    with GPU_LOCK:  # 單卡：一次一個請求
-        result = process_workbook(
-            src, instruction, context,
-            generate_fn=generate, retries=1)
+    try:
+        with GPU_LOCK:  # 單卡：一次一個請求
+            result = process_workbook(
+                src, instruction, context,
+                generate_fn=generate, retries=1)
+    except Exception as e:      # 模型不存在／連不上／逾時都回可讀的 JSON，不要 500
+        seconds = round(time.monotonic() - t0, 1)
+        msg = friendly_error(e)
+        log_event({"event": "process", "ok": False, "sid": sid,
+                   "instruction": instruction, "error": msg, "seconds": seconds})
+        shutil.rmtree(sdir, ignore_errors=True)
+        return JSONResponse({"ok": False, "error": msg, "seconds": seconds})
     seconds = round(time.monotonic() - t0, 1)
 
     base = {"sid": sid, "file": file.filename, "instruction": instruction,
@@ -304,7 +334,7 @@ def wb_process(sid: str, payload: dict):
                 generate_fn=generate, retries=1)
     except Exception as e:      # 模型逾時、連線失敗等都回 JSON，別讓前端收到 500 HTML
         seconds = round(time.monotonic() - t0, 1)
-        msg = f"{type(e).__name__}: {e}"
+        msg = friendly_error(e)
         log_event({"event": "process", "ok": False, "sid": sid, "ui": "pro",
                    "instruction": instruction, "error": msg, "seconds": seconds})
         return JSONResponse({"ok": False, "seconds": seconds,
