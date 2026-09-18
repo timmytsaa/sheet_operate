@@ -71,6 +71,8 @@ HTML_PRO = """<!doctype html>
     </div>
     <div id="status">先開啟檔案或載入範例。</div>
     <div id="diffbox">
+      <div id="warn" style="display:none;background:#fff5e6;border:1px solid #f0d090;border-radius:7px;
+           padding:7px 10px;margin-top:10px;font-size:12.5px;white-space:pre-line"></div>
       <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
            border-radius:7px;padding:9px 10px;margin-top:10px;font-size:12.5px;line-height:1.5">
         <b>模型的理解</b><br><span id="infer"></span>
@@ -257,6 +259,10 @@ async function run() {
     if (j.inference) { $("infer").textContent = j.inference;
       $("explain").textContent = j.explain || ""; $("inferbox").style.display = "block"; }
     else { $("inferbox").style.display = "none"; }
+    const w = (j.audit || []).map(x => "⚠ " + x);
+    // 一則一個 div、用 textContent：警示裡有使用者檔案的欄名，不能當 HTML 解讀
+    $("warn").replaceChildren(...w.map(t => Object.assign(document.createElement("div"), { textContent: t })));
+    $("warn").style.display = w.length ? "block" : "none";
     $("diffbox").style.display = "block";
     $("status").textContent = `完成（${j.seconds} 秒）——檢查黃底變更後採納或還原。`;
   } catch (e) {

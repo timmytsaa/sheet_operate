@@ -78,6 +78,9 @@ def run_code(code: str, input_path: str | Path, output_path: str | Path,
         env["SHEETOPS_INPUT"] = input_path
         env["SHEETOPS_OUTPUT"] = output_path
         env["PYTHONIOENCODING"] = "utf-8"
+        # 固定雜湊種子：程式若走訪 set／dict of str，每次執行的順序才會一樣。
+        # 位移重跑與自我一致性檢查都靠「同輸入 → 同輸出」，不固定會誤判成不一致。
+        env["PYTHONHASHSEED"] = "0"
 
         t0 = time.monotonic()
         try:

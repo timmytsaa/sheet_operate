@@ -19,6 +19,11 @@ merge_teacher.py 的方法檢查抓的是「看得出來的壞習慣」（字面
 參考解法本身也會先跑一次原始輸入當 sanity check；若參考解法在擾動後自己就掛了，
 表示這個擾動對該家族不適用，該題整個跳過（不冤枉 teacher）。
 
+5. 欄位位移（預設開啟，--no-column-probe 關閉）：每張表的欄整體右移一格再跑一次，
+   結果變了＝照位置取欄。與寫法無關——row[7]、ws['H2']、cell(r, 8)、iloc 都抓得到，
+   不像 merge_teacher.py 的正規式只認得列出來的寫法。判準在 sheetops/audit.py，
+   網頁版的警示用的是同一份。
+
 用法：
   python scripts/generalize_check.py --glob "data/sft/teacher_v6_*.jsonl" --tasks data/tasks/train_v6
   python scripts/generalize_check.py --glob "..." --tasks ... --out data/sft/clean.jsonl
@@ -45,6 +50,7 @@ sys.path.insert(0, str(ROOT))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from sheetops.audit import position_probe       # noqa: E402
 from sheetops.executor import run_code          # noqa: E402
 from sheetops.verifier import verify            # noqa: E402
 
@@ -119,6 +125,8 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="寫出通過泛化檢查的樣本（省略則只報告）")
     ap.add_argument("--extra-rows", type=int, default=4)
     ap.add_argument("--seed", type=int, default=20260825)
+    ap.add_argument("--no-column-probe", action="store_true",
+                    help="關閉欄位位移檢查（照位置取欄的樣本也收）")
     args = ap.parse_args()
 
     task_root = Path(args.tasks)
@@ -149,22 +157,32 @@ def main() -> int:
                     by_task[tid] = {"skip": "找不到任務目錄"}
                 else:
                     spec = json.loads(spec_path.read_text(encoding="utf-8"))
+                    # 欄位位移檢查用：原始輸入，以及指令（指令本身用位置指定欄位時不適用）
+                    probe = {"start": d / "start.xlsx",
+                             "ask": spec.get("instruction", "") + " " + (spec.get("context") or "")}
                     pin = tmp / f"{tid}_start.xlsx"
                     if not perturb(d / "start.xlsx", pin, rng, args.extra_rows):
-                        by_task[tid] = {"skip": "無法擾動"}
+                        by_task[tid] = {"skip": "無法擾動", **probe}
                     else:
                         pgoal = tmp / f"{tid}_goal.xlsx"
                         res = run_code(spec["ref_solution"], pin, pgoal, timeout=40)
                         if not res.ok or not pgoal.exists():
                             # 參考解法自己在擾動後就掛了 → 這個擾動對該家族不適用
-                            by_task[tid] = {"skip": "參考解法不耐擾動"}
+                            by_task[tid] = {"skip": "參考解法不耐擾動", **probe}
                         else:
                             chk = rebuild_check(spec["check"], pgoal)
                             if chk is None:
-                                by_task[tid] = {"skip": "無法重建預期答案"}
+                                by_task[tid] = {"skip": "無法重建預期答案", **probe}
                             else:
-                                by_task[tid] = {"in": pin, "goal": pgoal, "check": chk}
+                                by_task[tid] = {"in": pin, "goal": pgoal, "check": chk, **probe}
             info = by_task[tid]
+            code = extract(rec["messages"][-1]["content"])
+            # 欄位位移不需要參考解法，加列擾動不適用的題目也照樣檢查
+            if not args.no_column_probe and "start" in info and \
+                    position_probe(code, info["start"], info["ask"], timeout=40):
+                stat["欄位位移後結果改變"] += 1
+                failures.append((tid, rec.get("source", "?"), "照位置取欄（欄位右移一格後結果改變）"))
+                continue
             if "skip" in info:
                 stat[f"跳過：{info['skip']}"] += 1
                 kept.append(rec)          # 無法判定就保留，不冤枉
@@ -172,7 +190,7 @@ def main() -> int:
 
             out = tmp / f"{tid}_{stat['n']}_out.xlsx"
             stat["n"] += 1
-            res = run_code(extract(rec["messages"][-1]["content"]), info["in"], out, timeout=40)
+            res = run_code(code, info["in"], out, timeout=40)
             if not res.ok or not out.exists():
                 stat["換資料後執行失敗"] += 1
                 failures.append((tid, rec.get("source", "?"),
@@ -187,10 +205,11 @@ def main() -> int:
                 failures.append((tid, rec.get("source", "?"),
                                  (rep["mismatches"][:1] or [""])[0][:70]))
 
-    total = stat["通過"] + stat["換資料後執行失敗"] + stat["換資料後答案不符"]
+    shown = ("通過", "欄位位移後結果改變", "換資料後執行失敗", "換資料後答案不符")
+    total = sum(stat[k] for k in shown)
     print(f"\n{'結果':<20}{'筆數':<8}{'佔比'}")
     print("-" * 40)
-    for k in ("通過", "換資料後執行失敗", "換資料後答案不符"):
+    for k in shown:
         print(f"{k:<20}{stat[k]:<8}{stat[k] / max(total, 1):.1%}")
     for k in sorted(x for x in stat if x.startswith("跳過")):
         print(f"{k:<20}{stat[k]:<8}（保留，不判定）")

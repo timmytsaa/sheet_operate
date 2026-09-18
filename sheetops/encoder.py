@@ -243,6 +243,29 @@ def encode_workbook(path: str | Path, max_rows_per_sheet: int = 40,
         wb.close()
 
 
+def header_map(ws: Worksheet) -> tuple[int, dict[int, str], bool]:
+    """每一欄的「有效欄名」：(資料起始列, {欄號: 欄名}, 是否兩層表頭)。
+
+    兩層表頭時左半取第 1 列、右半取第 2 列（真實 BOM 的版型）；否則取偵測到的表頭列。
+    版型警示與 audit.py 的欄位來源檢查共用這一份，免得兩邊對「欄名是什麼」各說各話。
+    """
+    max_row, max_col = _used_range(ws)
+    if max_row < 2 or max_col < 1:
+        return 1, {}, False
+    two_tier = _detect_two_tier_header(ws, max_col)
+    if two_tier:
+        split = two_tier[0]
+        cells = ([(c, ws.cell(row=1, column=c).value) for c in range(1, split + 1)]
+                 + [(c, ws.cell(row=2, column=c).value) for c in range(split + 1, max_col + 1)])
+        start = 3
+    else:
+        hr = _detect_header_row(ws, max_row, max_col)
+        cells = [(c, ws.cell(row=hr, column=c).value) for c in range(1, max_col + 1)]
+        start = hr + 1
+    names = {c: str(v).strip() for c, v in cells if v not in (None, "")}
+    return start, names, bool(two_tier)
+
+
 def detect_layout_risks(path: str | Path) -> list[str]:
     """列出這份工作簿上「模型已知較容易出錯」的版型特徵。
 
@@ -256,19 +279,12 @@ def detect_layout_risks(path: str | Path) -> list[str]:
         max_row, max_col = _used_range(ws)
         if max_row < 2 or max_col < 2:
             continue
-        two_tier = _detect_two_tier_header(ws, max_col)
+        # 重複欄名要看「有效欄名」：真實 BOM 的兩個 M/S 一個在第 1 列、一個在第 2 列，
+        # 只掃單一列看不出來。
+        _, names, two_tier = header_map(ws)
         if two_tier:
             risks.add("兩層表頭")
-            # 重複欄名要看「有效欄名」：真實 BOM 的兩個 M/S 一個在第 1 列、一個在第 2 列，
-            # 只掃單一列看不出來。
-            split = two_tier[0]
-            names = ([ws.cell(row=1, column=c).value for c in range(1, split + 1)]
-                     + [ws.cell(row=2, column=c).value for c in range(split + 1, max_col + 1)])
-        else:
-            hr = _detect_header_row(ws, max_row, max_col)
-            names = [ws.cell(row=hr, column=c).value for c in range(1, max_col + 1)]
-        names = [str(v).strip() for v in names if v not in (None, "")]
-        if len(names) != len(set(names)):
+        if len(names) != len(set(names.values())):
             risks.add("重複欄名")
     wb.close()
     return sorted(risks)

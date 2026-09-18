@@ -130,7 +130,7 @@ def _consistent(src, instruction, context, answer_path, n=2):
         r = process_workbook(src, instruction, context,
                              generate_fn=lambda m: client.chat(
                                  m, temperature=0.6, max_tokens=MAX_GEN_TOKENS, retries=1),
-                             retries=1)
+                             retries=1, audit=False)
         if not r["ok"]:
             return False
         d = diff_workbooks(answer_path, r["result_path"])
@@ -185,7 +185,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
     SESSIONS[sid] = {"dir": sdir, "file": final, "name": final.name,
                      "created": time.time()}
     log_event({**base, "event": "process", "ok": True, "changed_cells": changed,
-               "sheets_added": result["diff"]["sheets_added"]})
+               "sheets_added": result["diff"]["sheets_added"], "audit": result.get("audit", [])})
     risks = detect_layout_risks(src)
     consistent = None
     if careful:
@@ -195,6 +195,7 @@ async def api_process(file: UploadFile = File(...), instruction: str = Form(...)
                          "diff_text": result["diff_text"], "code": result["code"],
                          "inference": result.get("inference", ""),
                          "explain": result.get("explain", ""),
+                         "audit": result.get("audit", []),
                          "risks": risks, "consistent": consistent,
                          "sheets_added": result["diff"]["sheets_added"],
                          "diff_coords": {name: v["coords"]
@@ -353,12 +354,13 @@ def wb_process(sid: str, payload: dict):
     s["pending"] = pending
     changed = sum(v["changed"] for v in result["diff"]["sheets"].values())
     log_event({**base, "event": "process", "ok": True, "changed_cells": changed,
-               "sheets_added": result["diff"]["sheets_added"]})
+               "sheets_added": result["diff"]["sheets_added"], "audit": result.get("audit", [])})
     return JSONResponse({
         "ok": True, "sid": sid, "seconds": seconds,
         "diff_text": result["diff_text"], "code": result["code"],
         "inference": result.get("inference", ""),
-                         "explain": result.get("explain", ""),
+        "explain": result.get("explain", ""),
+        "audit": result.get("audit", []),
         "diff_coords": {name: v["coords"] for name, v in result["diff"]["sheets"].items()},
         "snapshot": workbook_to_snapshot(pending)})
 
@@ -456,7 +458,7 @@ HTML_PAGE = """<!doctype html>
 </div>
 <div class="card hidden" id="result">
   <h1>變更預覽</h1>
-  <div id="warnbox" style="display:none;background:#fff5e6;border:1px solid #f0d090;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px"></div>
+  <div id="warnbox" style="display:none;background:#fff5e6;border:1px solid #f0d090;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px;white-space:pre-line"></div>
   <div id="inferbox" style="display:none;background:#eef4ff;border:1px solid #c9d8f5;
        border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px">
     <b>模型的理解</b><br><span id="infer"></span>
@@ -512,11 +514,12 @@ async function run() {
     if (j.inference) { $("infer").textContent = j.inference;
       $("explain").textContent = j.explain || ""; $("inferbox").style.display = "block"; }
     else { $("inferbox").style.display = "none"; }
-    const w = [];
+    const w = (j.audit || []).map(x => "⚠ " + x);
     if (j.risks && j.risks.length) w.push("⚠ " + j.risks.join("・") + " — 模型較常抓錯欄，請核對");
     if (j.consistent === false) w.push("⚠ 多次結果不一致，答案可能不可靠");
     if (j.consistent === true) w.push("✔ 多次結果一致");
-    $("warnbox").innerHTML = w.join("<br>");
+    // 一則一個 div、用 textContent：警示裡有使用者檔案的欄名，不能當 HTML 解讀
+    $("warnbox").replaceChildren(...w.map(t => Object.assign(document.createElement("div"), { textContent: t })));
     $("warnbox").style.display = w.length ? "block" : "none";
     $("result").classList.remove("hidden");
   } catch (e) { $("status").textContent = "❌ 連線錯誤：" + e; }

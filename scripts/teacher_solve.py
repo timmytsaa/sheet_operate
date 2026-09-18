@@ -16,6 +16,15 @@ rejection sampling 原本把沒通過的採樣直接丟掉，但那些不是垃�
 或分數與第一個不符處）——這同時是「多回合修復訓練」的原料：
 (失敗程式碼, 錯誤訊息) → 通過的那一版。
 
+方法關卡（預設開啟，--allow-positional 可關）
+--------------------------------------------
+通過 Gym 還不夠：既有訓練資料有六成是照欄位位置取值（row[7]、ws['H2']、x[7]…），
+答案對是因為 teacher 數對了這份檔——學生學到的卻是「數欄位」，換一份檔就數錯
+（範例檔上把 H「金額」當單價讀，漏 4 筆訂單）。這裡用 sheetops/audit.py 的
+欄位位移重跑判斷（與寫法無關），照位置取值的採樣記成負例（reason 以「方法錯：」開頭，
+build_dpo.py 會歸為 B 類），下一次採樣附上回饋請 teacher 改用欄名查找。
+回饋只用於呼叫 teacher；寫進訓練資料的仍是原始的 system＋user，學生學的是一次寫對。
+
 用法：
   python scripts/teacher_solve.py --tasks data/tasks/train --out data/sft/teacher_sft.jsonl --k 4
 """
@@ -32,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from sheetops.audit import position_probe
 from sheetops.encoder import encode_workbook
 from sheetops.env import solve_once
 from sheetops.executor import extract_code
@@ -48,6 +58,8 @@ def main():
                     help="不保存未通過的採樣（預設會寫到 <out>_rejected.jsonl 當 DPO 原料）")
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--model", default=None, help="覆寫 OLLAMA_MODEL")
+    ap.add_argument("--allow-positional", action="store_true",
+                    help="關閉方法關卡：照欄位位置取值、但答案對的採樣也收（不建議）")
     ap.add_argument("--limit", type=int, default=0, help="只處理前 N 題（0 = 全部）")
     ap.add_argument("--skip-from", default=None,
                     help="glob（如 'data/sft/v5_*.jsonl'）：這些檔案裡已完成的題目一併略過，"
@@ -128,10 +140,12 @@ def main():
                         {"role": "user", "content": user_prompt}]
 
             solved = False
+            feedback: list[dict] = []           # 方法關卡退件後，下一次呼叫附上的回饋
+            ask = spec["instruction"] + " " + (spec.get("context") or "")
             for attempt in range(args.k):
                 temp = 0.2 if attempt == 0 else args.temperature
                 try:
-                    reply = client.chat(messages, temperature=temp)
+                    reply = client.chat(messages + feedback, temperature=temp)
                 except RuntimeError as e:
                     # 額度用盡要整輪中止：繼續跑只會把每一題都標成「失敗」，
                     # 而且 API 錯誤不經過 save_rejected，負例也收不到。
@@ -148,6 +162,18 @@ def main():
                     save_rejected(spec, messages, attempt, "", "沒有 ```python 程式碼區塊", 0.0)
                     continue
                 report = solve_once(task_dir, code)
+                if report["full_match"] and not args.allow_positional and \
+                        position_probe(code, task_dir / "start.xlsx", ask, timeout=40):
+                    save_rejected(spec, messages, attempt, code,
+                                  "方法錯：照欄位位置取值（欄位右移一格後結果改變）",
+                                  float(report.get("score", 1.0)))
+                    feedback = [
+                        {"role": "assistant", "content": "```python\n" + code + "\n```"},
+                        {"role": "user", "content":
+                            "結果正確，但程式是照欄位位置取值（像 row[7]、ws['H2']、column=8 這類寫法），"
+                            "欄位順序不同的檔案就會取錯欄。請改成先讀表頭列、依欄名找出每一欄的位置再取值，"
+                            "輸出完整程式碼。"}]
+                    continue
                 if report["full_match"]:
                     record = {
                         "id": spec["id"], "family": spec["family"],

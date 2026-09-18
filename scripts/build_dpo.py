@@ -89,7 +89,9 @@ def main() -> int:
     # B 類：通過 Gym 但不在最終資料裡 = 被方法檢查／泛化檢查剔除
     negatives: list[tuple[dict, str]] = []
     for r in raw_rej:
-        negatives.append((r, "A_未通過Gym"))
+        # teacher_solve 的方法關卡退件也寫在 _rejected.jsonl，但那些其實通過了 Gym
+        kind = "B_通過Gym但方法錯" if str(r.get("reason", "")).startswith("方法錯") else "A_未通過Gym"
+        negatives.append((r, kind))
     for r in raw_pass:
         if normalize_code(r["messages"][-1]["content"]) not in kept_codes.get(r["id"], set()):
             negatives.append((r, "B_通過Gym但方法錯"))

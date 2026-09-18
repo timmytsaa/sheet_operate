@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+from .audit import audit as audit_result
 from .explain import render as render_explain
 from .diff import diff_workbooks, render_diff
 from .encoder import encode_workbook
@@ -27,9 +28,11 @@ def extract_inference(code: str) -> str:
 
 def process_workbook(src: str | Path, instruction: str, context: str = "",
                      generate_fn: Callable[[list[dict]], str] = None,
-                     retries: int = 1, exec_timeout: int = 60) -> dict:
+                     retries: int = 1, exec_timeout: int = 60,
+                     audit: bool = True) -> dict:
     """回傳：
-    {ok, code, attempts, result_path(暫存), diff(dict), diff_text, error}
+    {ok, code, attempts, result_path(暫存), diff(dict), diff_text, audit, error}
+    audit：取錯欄的警示（sheetops/audit.py，不看程式寫法）；自我一致性重抽樣時可關掉。
     ok=False 時 result_path 為 None，error 描述原因。
     呼叫端負責在用完後清理 result_path 所在的暫存資料夾。
     """
@@ -57,6 +60,7 @@ def process_workbook(src: str | Path, instruction: str, context: str = "",
                     "diff_text": render_diff(d),
                     "inference": extract_inference(code),
                     "explain": render_explain(code, extract_inference(code)),
+                    "audit": audit_result(code, src, result_path) if audit else [],
                     "error": ""}
 
         if attempt < retries:

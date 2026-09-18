@@ -94,12 +94,15 @@ def analyze(code: str) -> dict:
 _CLAIM = re.compile(r"[｜|]\s*(?:欄位|鍵)\s*=\s*([^｜|]+)")
 
 
-# 「用肉眼數欄位」的痕跡。這裡是單一來源——scripts/merge_teacher.py 的方法檢查、
-# GRPO 的 reward 懲罰、以及下面的解釋都用同一份判準，避免三處各寫一套而漂移。
+# 「用肉眼數欄位」的文字痕跡——訓練資料過濾（scripts/merge_teacher.py）與 GRPO reward
+# 懲罰共用這一份，當作不必執行程式的快速初篩。它只認得列出來的寫法；介面上的判斷
+# 改用 audit.py 的行為檢查（欄位位移重跑），那個與寫法無關。
 # row[0] 例外（空列守衛，參考解法也這樣寫）。
 LITERAL_INDEX = re.compile(
     r"row\[\s*[1-9]\d*\s*\]|values\[\s*[1-9]\d*\s*\]|"
-    r"\.cell\((?![^)]*value\s*=)[^)]*column\s*=\s*(?!1\b)\d+[^)]*\)\.value")
+    r"\.cell\((?![^)]*value\s*=)[^)]*column\s*=\s*(?!1\b)\d+[^)]*\)\.value|"
+    # 欄字母：ws[f'H{row}'].value（範例檔上把 H「金額」當單價讀、漏 4 筆的就是這種）
+    r"\[\s*f?['\"][A-Z]{1,3}(?:\{[^}]+\}|\d+)['\"]\s*\]\s*\.value")
 
 SWALLOW = re.compile(r"except[^\n]*:\s*\n\s*(?:pass|continue)\s*(?:\n|$)")
 
@@ -131,7 +134,7 @@ def contradictions(inference: str, code: str) -> list[str]:
 
 
 def render(code: str, inference: str = "") -> str:
-    """組成給使用者看的「程式碼實際做了什麼」。"""
+    """組成給使用者看的「程式碼實際做了什麼」。取欄對不對由 audit.py 另外判斷。"""
     a = analyze(code)
     if not a["ok"]:
         return a["error"]
@@ -146,9 +149,6 @@ def render(code: str, inference: str = "") -> str:
     if a["created"]:
         lines.append("新增工作表：" + "、".join(a["created"]))
     body = _strip_comments(code)
-    hit = LITERAL_INDEX.search(body)
-    if hit:
-        lines.append(f"⚠ 用了硬編欄位索引 {hit.group(0)}——沒有依欄名查找，換一份檔就可能取錯欄")
     if SWALLOW.search(body):
         lines.append("⚠ 有 except: pass——出錯的資料會被靜默略過，總數可能不對")
     bad = contradictions(inference, code)
